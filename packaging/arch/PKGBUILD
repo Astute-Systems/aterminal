@@ -1,0 +1,24 @@
+# Builds from this checkout: cd packaging/arch && makepkg
+pkgname=aterminal
+pkgver=$(cat "$startdir/../../VERSION")
+pkgrel=1
+pkgdesc='Phosphor CRT terminal emulator'
+arch=('x86_64')
+url='https://github.com/ross-newman/aterminal'
+license=('LicenseRef-unspecified')
+depends=('sdl2' 'gcc-libs' 'glibc')
+makedepends=('cmake')
+options=('!debug')
+
+build() {
+    cmake -S "$startdir/../.." -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build -j "$(nproc)"
+}
+
+check() {
+    ctest --test-dir build --output-on-failure
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+}

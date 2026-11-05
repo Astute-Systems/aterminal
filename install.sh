@@ -4,26 +4,26 @@ set -eu
 
 usage() {
     cat <<USAGE
-Usage: ./install.sh [--user | --prefix DIR | --deb] [--help]
+Usage: ./install.sh [--user | --prefix DIR | --deb | --rpm] [--help]
 
   (no option)    Install to /usr/local, using sudo if needed
   --user         Install to \$HOME/.local without root access
   --prefix DIR   Install to DIR
   --deb          Build a .deb package in build/ instead of installing
-
-Set SPACE_PARANOIDS_DIR if the Space Paranoids checkout is not at ../space-paranoids.
+  --rpm          Build an .rpm package in build/ instead of installing
 USAGE
 }
 
 prefix=/usr/local
-deb=false
+package=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --user) prefix="$HOME/.local" ;;
         --prefix)
             [ $# -ge 2 ] || { echo "install.sh: --prefix needs a directory" >&2; exit 2; }
             prefix="$2"; shift ;;
-        --deb) deb=true ;;
+        --deb) package=DEB ;;
+        --rpm) package=RPM ;;
         -h|--help) usage; exit 0 ;;
         *) echo "install.sh: unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -31,16 +31,11 @@ while [ $# -gt 0 ]; do
 done
 
 cd "$(dirname "$0")"
-if [ -n "${SPACE_PARANOIDS_DIR:-}" ]; then
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSPACE_PARANOIDS_DIR="$SPACE_PARANOIDS_DIR"
-else
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-fi
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j "$(nproc)"
 
-if [ "$deb" = true ]; then
-    (cd build && cpack -G DEB)
-    echo "Install the package with: sudo apt install ./build/$(cd build && ls -t aterminal_*.deb | head -n 1)"
+if [ -n "$package" ]; then
+    (cd build && cpack -G "$package")
     exit 0
 fi
 

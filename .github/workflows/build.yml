@@ -1,0 +1,108 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libsdl2-dev dpkg-dev
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j "$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Package
+        run: cd build && cpack -G DEB
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-24.04
+          path: build/*.deb
+          if-no-files-found: error
+
+  almalinux:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['9', '10']
+    container: almalinux:${{ matrix.version }}
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+          dnf install -y gcc-c++ cmake make rpm-build git SDL2-devel
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j "$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Package
+        run: cd build && cpack -G RPM
+      - uses: actions/upload-artifact@v4
+        with:
+          name: almalinux-${{ matrix.version }}
+          path: build/*.rpm
+          if-no-files-found: error
+
+  arch:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed git cmake sdl2-compat
+      - uses: actions/checkout@v4
+      - name: Build, test and package
+        run: |
+          # makepkg refuses to run as root.
+          useradd --create-home builder
+          chown -R builder .
+          su builder -c 'cd packaging/arch && makepkg --noconfirm'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: packaging/arch/*.pkg.tar.zst
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ubuntu, almalinux, arch]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches VERSION
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "$(cat VERSION)" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match VERSION $(cat VERSION)" >&2
+              exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Add checksums
+        run: cd artifacts && sha256sum * > SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
+          else
+              gh release create "$GITHUB_REF_NAME" artifacts/* --verify-tag --generate-notes
+          fi

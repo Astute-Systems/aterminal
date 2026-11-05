@@ -87,9 +87,9 @@ Default text is `#D7DEDA`, and default bold text is `#FFFFFF`.
 - Resizable windows, six text zoom levels, and Alt+Enter fullscreen switching.
 - Optional synthesized key clicks; no recorded sound assets are required.
 
-The software renderer and AdLib synthesizer are reused directly from
-[Space Paranoids](https://github.com/ross-newman/space-paranoids). There is no Qt,
-SDL_ttf, FreeType, libvterm, browser engine, or Google gflags dependency.
+The software renderer and AdLib synthesizer come from
+[Space Paranoids](https://github.com/ross-newman/space-paranoids), and the files
+used are included in `third_party/`. There is no Qt, SDL_ttf, FreeType, libvterm, browser engine, or Google gflags dependency.
 
 ## Requirements
 
@@ -99,23 +99,17 @@ SDL_ttf, FreeType, libvterm, browser engine, or Google gflags dependency.
 | Compiler | C++17-capable GCC or Clang |
 | Build system | CMake 3.22 or newer |
 | External library | SDL2 development headers and library |
-| Reused source | Space Paranoids checkout containing `engine/` and `adlib/` |
 | Font data | Bundled GNU Unifont 16.0.04 bitmap asset |
 
-On Debian or Ubuntu, install the build prerequisites:
+Install the build prerequisites for your distribution:
 
 ```sh
-sudo apt install build-essential cmake libsdl2-dev
+sudo apt install build-essential cmake libsdl2-dev        # Debian, Ubuntu
+sudo dnf install gcc-c++ cmake make SDL2-devel            # AlmaLinux, needs CRB
+sudo pacman -S --needed base-devel cmake sdl2-compat      # Arch Linux
 ```
 
-Space Paranoids is required at build time, not at runtime. By default CMake
-expects the two checkouts to be siblings:
-
-```text
-repos/
-|-- aterminal/
-|-- space-paranoids/
-```
+On AlmaLinux, enable CRB first with `sudo dnf config-manager --set-enabled crb`.
 
 ## Build And Run
 
@@ -126,12 +120,6 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ./build/aterminal
-```
-
-For a differently located Space Paranoids checkout:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSPACE_PARANOIDS_DIR=/absolute/path/to/space-paranoids
 ```
 
 The application starts `$SHELL`, or `/bin/sh` if it is unset, in the directory
@@ -178,15 +166,23 @@ and man page caches:
 ./install.sh --prefix /opt/aterminal
 ```
 
-To build and install a Debian package instead:
+To build and install a package instead:
 
 ```sh
-./install.sh --deb
-sudo apt install ./build/aterminal_0.1.0_amd64.deb
+./install.sh --deb && sudo apt install ./build/aterminal_*.deb     # Debian, Ubuntu
+./install.sh --rpm && sudo dnf install ./build/aterminal-*.rpm     # AlmaLinux
+cd packaging/arch && makepkg --install                             # Arch Linux
 ```
 
-The package version comes from the `VERSION` file, and `apt` works out the
-library dependencies. Remove the package with `sudo apt remove aterminal`.
+The package version comes from the `VERSION` file, and the package manager works
+out the library dependencies.
+
+### Releases
+
+Every push builds and tests on Ubuntu 24.04, AlmaLinux 9 and 10, and Arch Linux.
+Pushing a tag such as `v0.1.0` also publishes a GitHub release with the `.deb`,
+`.rpm` and Arch packages and a `SHA256SUMS` file. The tag must match the `VERSION`
+file.
 
 Installation includes the executable, a desktop menu entry and icon, a man page, Unicode font data, documentation,
 screenshots, and upstream notices. Keep the installed font data alongside the
@@ -403,7 +399,6 @@ compatibility with every shell, editor, or terminal application.
 
 | Problem | Action |
 | --- | --- |
-| CMake cannot find Space Paranoids | Set `SPACE_PARANOIDS_DIR` to the checkout containing `engine/` and `adlib/` |
 | SDL2 is missing during configuration | Install your distribution's SDL2 development package |
 | Unicode bitmap font cannot be found | Keep `assets/unifont.hex` in the source tree, or reinstall with the font asset |
 | No audio device or unwanted key sounds | Start with `--no-sound`; audio-device failures do not stop the terminal |
