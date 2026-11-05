@@ -18,7 +18,7 @@ aterminal \- phosphor CRT terminal emulator
 .IR N ]
 .br
 .RB [ \-\-colour
-.BR green | amber ]
+.BR green | amber | colour ]
 .RB [ \-\-fullscreen [ =true | =false ]| \-\-windowed ]
 .br
 .RB [ \-\-shell
@@ -28,11 +28,44 @@ aterminal \- phosphor CRT terminal emulator
 .RB [ \-c
 .IR command ]
 .RB [ \-\-demo ]
+.RB [ \-\-motd [ =\fINAME\fR]]
+.RB [ \-\-prompt
+.IR style ]
+.br
+.RB [ \-\-geometry
+.IR COLUMNS x ROWS ]
+.RB [ \-d
+.IR dir ]
+.RB [ \-\-title
+.IR text ]
+.RB [ \-\-maximized ]
+.RB [ \-\-console
+.IR N ]
+.br
+.RB [ \-\-scrollback
+.IR N ]
+.RB [ \-l ]
+.RB [ \-\-hold ]
+.RB [ \-\-cursor
+.IR style ]
+.RB [ \-\-no\-blink ]
+.br
+.RB [ \-\-scanlines
+.IR N ]
+.RB [ \-\-bloom
+.IR N ]
+.RB [ \-\-bell
+.IR mode ]
+.RB [ \-\-config
+.IR file ]
+.br
 .RB [ \-h | \-\-help ]
+.RB [ \-\-
+.IR "program args..." ]
 .SH DESCRIPTION
 .B aterminal
 is a native Linux terminal with the look of a phosphor CRT: green or amber
-text, soft bloom, scanlines, a vignette, and optional AdLib\-style key sounds.
+text or a colour tube, soft bloom, scanlines, a vignette, and optional AdLib\-style key sounds.
 .PP
 Twelve independent shell consoles live behind the F1\-F12 keys. Each one starts
 its own pseudo\-terminal when first visited and keeps running in the background.
@@ -57,16 +90,26 @@ than once, the last one wins.
 Show flags and keyboard shortcuts, then exit.
 .TP
 .BI \-\-size " WIDTH" x HEIGHT
-Set the initial window size in pixels. The default is 1104x768.
+Set the initial window size in pixels. The default fits 80x25 characters at the
+text size in use.
+.TP
+.BI \-\-geometry " COLUMNS" x ROWS
+Set the initial size in characters, 20\-500 by 5\-200. It cannot be combined with
+.BR \-\-size ,
+.BR \-\-width ,
+or
+.BR \-\-height .
 .TP
 .BI \-\-width " N\fR, " \-\-height " N"
 Set the dimensions separately. Width is 400\-4096 and height is 280\-2160.
 .TP
 .BI \-\-text\-size " N"
-Set the initial zoom level, 1\-5. The default is 2 when no preference is saved.
+Set the initial zoom level, 1\-6. The default is 6, lowered if needed to fit the
+screen.
 .TP
-.BR \-\-colour " " green | amber ", " \-\-color " " green | amber
-Choose the phosphor colour.
+.BR \-\-colour " " green | amber | colour ", " \-\-color " " ...
+Choose green or amber phosphor, or a colour CRT that shows ANSI, 256\-colour and
+truecolour values in colour.
 .TP
 .BR \-\-green ", " \-\-amber
 Short aliases for
@@ -78,11 +121,41 @@ Start in desktop fullscreen, or windowed if the value is false.
 .B \-\-windowed
 Start windowed.
 .TP
+.B \-\-maximized
+Start maximised.
+.TP
+.BI \-\-title " text"
+Replace
+.B aterminal
+in the window title.
+.TP
+.BI \-\-console " N"
+Open on console
+.IR N ,
+1\-12.
+.TP
 .BR \-\-sound ", " \-\-no\-sound
 Enable or disable synthesized key clicks.
 .TP
 .B \-\-no\-crt
 Disable bloom, scanlines, and the vignette.
+.TP
+.BI \-\-scanlines " N\fR, " \-\-bloom " N"
+Set the strength of each effect, 0\-100 percent. The default is 100.
+.TP
+.BR \-\-cursor " " block | bar | underline
+Choose the cursor shape.
+.TP
+.B \-\-no\-blink
+Keep the cursor steady.
+.TP
+.BR \-\-bell " " visual | audible | none
+Flash the screen, play a key click, or ignore the bell. The default is visual.
+.TP
+.BI \-\-scrollback " N"
+Keep
+.I N
+history lines per console, 0\-1000000. The default is 10000.
 .TP
 .B \-\-bitmap
 Use bitmap glyphs throughout instead of the mixed retro font.
@@ -97,7 +170,7 @@ in the selected shell using
 .BR \-c .
 Quote it as one argument. Newly opened consoles run it too.
 .TP
-.BI \-c " command"
+.BI \-c " command\fR, " \-\-startup " command"
 Run
 .I command
 at startup, then continue in an interactive shell. It runs once, in the first
@@ -105,9 +178,67 @@ console only, and cannot be combined with
 .B \-e
 or
 .BR \-\-demo .
-Startup files run for the interactive shell, not for
-.IR command ,
-so aliases are not available to it.
+Under bash it runs after
+.IR ~/.bashrc ,
+so aliases work. Other shells run it before their startup files.
+.TP
+.BI \-\- " program args..."
+Run a program directly in every console, without a shell. This must come last.
+.TP
+.BI \-d " dir\fR, " \-\-working\-directory " dir"
+Start consoles in
+.IR dir .
+.TP
+.BR \-l ", " \-\-login
+Start a login shell.
+.TP
+.B \-\-hold
+Show the exit status when a console's process ends. Consoles always stay on
+screen after exiting, until restarted.
+.TP
+.BI \-\-prompt " style"
+Choose the bash prompt. The default is
+.BR redhat .
+The styles are
+.BR slackware ,
+.BR debian ,
+.BR redhat ,
+.BR bsd ,
+.BR sunos ,
+.BR unix ,
+.BR bourne ,
+.BR bash ,
+and
+.BR dos ,
+or
+.B none
+to keep the prompt from your startup files.
+.B \-\-prompt=list
+shows them. Text containing a symbol or space, such as
+.BR \-\-prompt=\(aq$\(aq ,
+is used as the prompt itself.
+.I ~/.bashrc
+still runs. This needs an interactive bash shell.
+.TP
+.BR \-\-motd [ =\fINAME\fR]
+Show a message of the day on each new console. With no name, or with
+.BR random ,
+each console picks at random.
+.B \-\-motd=list
+shows the names. This cannot be combined with
+.BR \-\-demo .
+.TP
+.BI \-\-config " file"
+Read options from
+.IR file ,
+one per line without the leading dashes, as
+.IR "name value" ,
+.IR name = value ,
+or
+.IR name .
+Blank lines and lines starting with
+.B #
+are ignored. Later options override the file.
 .TP
 .B \-\-demo
 Display the built\-in font and terminal demonstration, then open a shell.
@@ -128,18 +259,14 @@ Save the final rendered display as a PNG when the application exits.
 Switch to that console, creating it on first use. These keys are not forwarded
 to applications.
 .TP
-.BR + ", " \-
+.B Ctrl+Shift+Alt+Plus\fR, \fBCtrl+Shift+Alt+Minus
 Increase or decrease the text size.
-.TP
-.B Ctrl+Shift+Plus\fR, \fBCtrl+Shift+Minus
-Send a literal
-.B +
-or
-.B \-
-to the shell.
 .TP
 .B Ctrl+Shift+A\fR, \fBCtrl+Shift+G
 Select amber or green phosphor.
+.TP
+.B Ctrl+Shift+O
+Toggle the colour CRT.
 .TP
 .B Ctrl+Shift+S
 Toggle key sounds.
@@ -166,8 +293,12 @@ nothing is selected.
 .B Ctrl+Shift+C
 Copy the selected text without sending an interrupt.
 .TP
-.B Ctrl+V\fR, \fBCtrl+Shift+V\fR, \fBShift+Insert\fR, middle click
-Paste.
+.B Ctrl+V\fR, \fBCtrl+Shift+V\fR, \fBShift+Insert
+Paste the clipboard.
+.TP
+Middle click
+Paste the selected text, including text selected in other applications, or the
+clipboard if nothing is selected.
 .TP
 .B Ctrl+Z\fR, \fBCtrl+Y
 Forward to the shell or application.
@@ -198,7 +329,7 @@ for child processes.
 .SH FILES
 .TP
 .I ${XDG_DATA_HOME:\-$HOME/.local/share}/ross\-newman/aterminal/preferences
-Colour, sound, CRT effects, font mode, and text zoom, saved on normal exit.
+Display colour mode, sound, CRT effects, and font mode, saved on normal exit.
 Remove this file while
 .B aterminal
 is closed to reset them.
@@ -217,13 +348,16 @@ An option was invalid, or startup failed.
 .B aterminal \-\-colour=amber \-\-size=1280x800 \-\-text\-size=3
 .B aterminal \-\-green \-\-fullscreen \-\-no\-sound
 .B aterminal \-\-shell /bin/bash \-e htop
+.B aterminal \-c 'cd ~/repos && git status'
+.B aterminal \-\-colour=colour \-\-prompt=slackware \-\-geometry=132x43
+.B aterminal \-d ~/repos \-\-title Build \-\- make test
 .fi
 .SH BUGS
 .B aterminal
 advertises
 .B xterm\-256color
 but does not implement every xterm sequence. Mouse reporting, sixel graphics,
-OSC clipboard access, custom tab stops, and DEC double\-height text are not
+OSC clipboard access, and DEC double\-height text are not
 implemented. Emoji are monochrome, and complex\-script shaping and bidirectional
 layout are not implemented.
 .PP

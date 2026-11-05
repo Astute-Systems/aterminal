@@ -1,5 +1,7 @@
 #include "session.h"
 
+#include "prompt.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
@@ -17,33 +19,43 @@ extern char** environ;
 
 namespace {
 
-// Passed to bash in place of ~/.bashrc: runs that as usual, then removes its colour
-// resets so bold carries through to the final "\$ ". The "$" stays normal weight.
-constexpr char kBashStartup[] =
-    R"([ -f ~/.bashrc ] && . ~/.bashrc
-if [[ $PS1 == *'\$ ' ]]; then
+// Bash is given a startup script in place of ~/.bashrc. It runs the usual files, or
+// the login files for a login shell, since bash ignores --rcfile in that case.
+constexpr char kBashRc[] = "[ -f ~/.bashrc ] && . ~/.bashrc\n";
+constexpr char kBashLogin[] =
+    R"([ -f /etc/profile ] && . /etc/profile
+if [ -f ~/.bash_profile ]; then . ~/.bash_profile
+elif [ -f ~/.bash_login ]; then . ~/.bash_login
+elif [ -f ~/.profile ]; then . ~/.profile
+fi
+)";
+
+// Removes colour resets so bold carries through to the final "\$ ", which stays
+// normal weight.
+constexpr char kBoldPrompt[] =
+    R"(if [[ $PS1 == *'\$ ' ]]; then
     PS1=${PS1//'\[\033[00m\]'/}
     PS1='\[\033[1m\]'${PS1%'\$ '}'\[\033[0m\]\$ '
 fi
 )";
 
+}
+
 bool IsBash(const std::string& shell) {
     return shell.substr(shell.rfind('/') + 1) == "bash";
 }
 
-}
-
-std::string ThenInteractiveShell(const std::string& command, const std::string& shell) {
+std::string ThenInteractiveShell(const std::string& command, const std::string& shell, bool login) {
     std::string quoted = "'";
     for (char byte : shell) {
         if (byte == '\'') quoted += "'\\''";
         else quoted += byte;
     }
     // A newline, not a semicolon, so a trailing comment in the command stays harmless.
-    return command + "\nexec " + quoted + "' -i";
+    return command + "\nexec " + quoted + (login ? "' -l -i" : "' -i");
 }
 
-Session::Session(int rows, int columns, const std::string& shell, const std::string& command)
+Session::Session(int rows, int columns, const std::string& shell, const std::string& command, const ShellOptions& options)
     : terminal(rows, columns) {
     std::vector<std::string> environment;
     for (char** entry = environ; *entry; ++entry) {
@@ -58,17 +70,29 @@ Session::Session(int rows, int columns, const std::string& shell, const std::str
     env.push_back(nullptr);
     std::vector<std::string> arguments{shell};
     int startup[2] = {-1, -1};
-    if (command.empty() && IsBash(shell) && pipe(startup) == 0) {
-        // Far smaller than a pipe buffer, so this cannot block; bash reads it at start-up.
-        const std::string script = kBashStartup + ("exec " + std::to_string(startup[0]) + "<&-\n");
+    if (!options.exec.empty()) arguments = options.exec;
+    else if (!command.empty()) {
+        if (options.login) arguments.emplace_back("-l");
+        arguments.emplace_back("-c");
+        arguments.push_back(command);
+    } else if (IsBash(shell) && pipe(startup) == 0) {
+        std::string script = options.login ? kBashLogin : kBashRc;
+        script += options.prompt.empty() ? std::string(kBoldPrompt) : PromptScript(options.prompt);
+        script += "exec " + std::to_string(startup[0]) + "<&-\n" + options.startup + "\n";
+        // main limits the startup command so this fits a pipe buffer and cannot block.
         const auto ignored = write(startup[1], script.data(), script.size());
         (void)ignored;
         close(startup[1]);
         arguments.emplace_back("--rcfile");
         arguments.push_back("/dev/fd/" + std::to_string(startup[0]));
+        arguments.emplace_back("-i");
+    } else if (!options.startup.empty()) {
+        arguments.emplace_back("-c");
+        arguments.push_back(ThenInteractiveShell(options.startup, shell, options.login));
+    } else {
+        if (options.login) arguments.emplace_back("-l");
+        arguments.emplace_back("-i");
     }
-    if (command.empty()) arguments.emplace_back("-i");
-    else { arguments.emplace_back("-c"); arguments.push_back(command); }
     std::vector<char*> argv;
     for (auto& argument : arguments) argv.push_back(argument.data());
     argv.push_back(nullptr);
@@ -79,7 +103,14 @@ Session::Session(int rows, int columns, const std::string& shell, const std::str
     if (child_ != 0 && startup[0] >= 0) close(startup[0]);
     if (child_ < 0) throw std::runtime_error(std::string("forkpty: ") + std::strerror(errno));
     if (child_ == 0) {
-        execve(shell.c_str(), argv.data(), env.data());
+        if (!options.directory.empty() && chdir(options.directory.c_str()) != 0) {
+            constexpr char failure[] = "aterminal: cannot enter working directory\r\n";
+            const auto ignored = write(STDERR_FILENO, failure, sizeof(failure) - 1);
+            (void)ignored;
+            _exit(127);
+        }
+        if (!options.exec.empty()) execvpe(argv[0], argv.data(), env.data());
+        else execve(shell.c_str(), argv.data(), env.data());
         constexpr char failure[] = "aterminal: cannot execute shell\r\n";
         const auto ignored = write(STDERR_FILENO, failure, sizeof(failure) - 1);
         (void)ignored;

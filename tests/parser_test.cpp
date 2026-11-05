@@ -36,6 +36,14 @@ int main() {
             Check(margins.Row() == 2 && margins.At(2, 0).text == U"\u2500", "restore cursor brings back origin mode and charset");
             margins.Feed("\033[?6l\033[?7h\033[1;1H\0337\033[?7l\0338\033[1;20Hab");
             Check(margins.At(1, 0).text == U"b", "restore cursor brings back autowrap");
+            Terminal limited(3, 10);
+            limited.SetHistoryLimit(2);
+            limited.Feed("\033[3;1Ha\nb\nc\nd\ne\n");
+            Check(limited.History().size() == 2, "history limit");
+            Terminal none(3, 10);
+            none.SetHistoryLimit(0);
+            none.Feed("\033[3;1Ha\nb\nc\n");
+            Check(none.History().empty(), "no history");
             Terminal sets(4, 20);
             sets.Feed("\033)0a\x0eq\x0fq\033(0q\033(B");
             Check(sets.At(0, 0).text == U"a" && sets.At(0, 1).text == U"\u2500", "SO selects G1");

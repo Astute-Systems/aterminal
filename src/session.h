@@ -3,14 +3,26 @@
 #include "terminal.h"
 #include <string>
 #include <sys/types.h>
+#include <vector>
 
 // A shell command that runs `command`, then continues as an interactive `shell`.
-std::string ThenInteractiveShell(const std::string& command, const std::string& shell);
+std::string ThenInteractiveShell(const std::string& command, const std::string& shell, bool login = false);
+
+bool IsBash(const std::string& shell);
+
+struct ShellOptions {
+    std::string startup;           // Run once, then continue interactively
+    std::string prompt;            // A style from prompt.h; bash only
+    std::string directory;         // Working directory, if set
+    std::vector<std::string> exec; // Run this program instead of the shell
+    bool login = false;
+};
 
 class Session {
 public:
     Terminal terminal;
-    explicit Session(int rows, int columns, const std::string& shell, const std::string& command = {});
+    explicit Session(int rows, int columns, const std::string& shell, const std::string& command = {},
+                     const ShellOptions& options = {});
     ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;

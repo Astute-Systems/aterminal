@@ -125,6 +125,31 @@ int main(int argc, char** argv) {
         display.Paint(terminal, 0, preferences, false);
         Check(Bright(display.image, Display::Margin, Display::Margin, cell_width, cell_height) >
               static_cast<std::size_t>(cell_width * cell_height / 2), "black on colour reads as reverse video");
+        const auto pixel_sum = [&](int channel) {
+            std::uint64_t sum = 0;
+            for (int y = Display::Margin; y < Display::Margin + cell_height; ++y)
+                for (int x = Display::Margin; x < Display::Margin + cell_width; ++x)
+                    sum += display.image.data()[(static_cast<std::size_t>(y) * display.image.width() + x) * 3 + channel];
+            return sum;
+        };
+        preferences.colour = true;
+        terminal.Feed("\033[2J\033[H\033[41m \033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(pixel_sum(0) > 4 * pixel_sum(1), "colour CRT red background");
+        terminal.Feed("\033[2J\033[H\033[44m \033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(pixel_sum(2) > 2 * pixel_sum(0) && pixel_sum(2) > pixel_sum(1), "colour CRT blue background");
+        terminal.Feed("\033[2J\033[H\033[48;2;10;200;30m \033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(pixel_sum(1) > 4 * pixel_sum(0), "colour CRT truecolour background");
+        terminal.Feed("\033[2J\033[H\033[48;5;196m \033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(pixel_sum(0) > 4 * pixel_sum(1), "colour CRT 256-colour background");
+        terminal.Feed("\033[2J\033[H\033[7;31m \033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(pixel_sum(0) > 4 * pixel_sum(1), "colour CRT reverse video");
+        terminal.Feed("\033[2J\033[H");
+        preferences.colour = false;
         preferences.bitmap = true;
         display.Paint(terminal, 0, preferences, true);
         Check(display.Nonblank(), "bitmap mode");

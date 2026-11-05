@@ -30,20 +30,57 @@ The version number used in the badge and title should always match the content o
 
 ### Green Phosphor
 
-![Green CRT terminal displaying mixed-case text, bold and italic styles, Unicode, emoji, and DEC line drawing](docs/screenshots/green.png)
+![Green CRT terminal displaying a sample shell session with file listings, git output, and status labels](docs/screenshots/green.png)
 
 ### Amber Phosphor
 
-![Amber CRT terminal displaying the same terminal session with bloom, scanlines, and vignette](docs/screenshots/amber.png)
+![Amber CRT terminal displaying the same sample shell session with bloom, scanlines, and vignette](docs/screenshots/amber.png)
 
-Actual application captures using the built-in demonstration session, at
-960 x 600 pixels with text zoom 2. Emoji are monochrome, matching the phosphor.
+### Colour CRT
+
+![Colour CRT terminal displaying a sample shell session with coloured prompts, file listings, git output, and status labels](docs/screenshots/colour.png)
+
+All three are actual captures of the same scripted sample session, at 960 x 600
+pixels with text zoom 2. In green and amber, colours become phosphor brightness,
+and black text on a coloured background becomes reverse video. To display the
+session yourself:
+
+```sh
+./build/aterminal --colour=colour --text-size=2 --size=960x600 -- sh docs/sample-session.sh
+```
+
+### Colour Reference
+
+![Colour bars, ANSI 16-colour swatches, 256-colour cube and grey ramp, truecolour ramps, and coloured text](docs/screenshots/colour-bars.png)
+
+To display this chart in your own terminal:
+
+```sh
+./build/aterminal --colour=colour --geometry=80x25 -- sh docs/colour-bars.sh
+```
+
+The colour mode shows the 16 ANSI colours with these values. Bold text uses the
+bright value of the eight standard colours. Background colour 0 shows the near-black
+screen, `#060709`.
+
+| Index | Colour | Value | Index | Bright colour | Value |
+| --- | --- | --- | --- | --- | --- |
+| 0 | Black | `#000000` | 8 | Bright black | `#7F7F7F` |
+| 1 | Red | `#CD0000` | 9 | Bright red | `#FF0000` |
+| 2 | Green | `#00CD00` | 10 | Bright green | `#00FF00` |
+| 3 | Yellow | `#CDCD00` | 11 | Bright yellow | `#FFFF00` |
+| 4 | Blue | `#1E5AEE` | 12 | Bright blue | `#5C5CFF` |
+| 5 | Magenta | `#CD00CD` | 13 | Bright magenta | `#FF00FF` |
+| 6 | Cyan | `#00CDCD` | 14 | Bright cyan | `#00FFFF` |
+| 7 | White | `#E5E5E5` | 15 | Bright white | `#FFFFFF` |
+
+Default text is `#D7DEDA`, and default bold text is `#FFFFFF`.
 
 ## Features
 
 - Twelve isolated Linux PTY sessions, created on demand with F1-F12.
 - Retro stroke glyphs with aligned bitmap fallback for lowercase and Unicode.
-- Green or amber phosphor, with independently switchable CRT effects.
+- Green or amber phosphor or a colour CRT, with independently switchable effects.
 - UTF-8 input, CJK glyphs, combining marks, and basic monochrome emoji support.
 - Synthetic bold, italic, underline, reverse video, and strikethrough attributes.
 - Mouse selection, clipboard copy/paste, and 10,000 scrollback lines per console.
@@ -111,6 +148,8 @@ requires an absolute executable path.
 ./build/aterminal --motd=haiku --amber
 ./build/aterminal --shell /bin/bash -e 'htop'
 ./build/aterminal -c 'cd ~/repos && git status'
+./build/aterminal --colour=colour --prompt=slackware --geometry=132x43
+./build/aterminal -d ~/repos --title Build -- make test
 ./build/aterminal -h
 ```
 
@@ -118,10 +157,12 @@ requires an absolute executable path.
 command as one argument. That command is also used for newly opened consoles,
 and each console ends when its command does.
 
-`-c` also uses the shell's `-c`, but leaves you at an interactive prompt afterwards.
-It runs once, in the first console only, and cannot be combined with `-e` or
-`--demo`. Startup files such as `~/.bashrc` run for the prompt that follows, not
-for the command, so aliases are not available to it.
+`-c` leaves you at an interactive prompt afterwards. It runs once, in the first
+console only, and cannot be combined with `-e` or `--demo`. Under bash it runs
+after `~/.bashrc`, so aliases work; other shells run it before their startup files.
+
+`--` runs a program directly with its arguments, so nothing needs shell quoting.
+It applies to every console and must come last on the command line.
 
 The window title shows the console and its size in characters, such as
 `aterminal / F1 / 80x25`, and updates as you resize or zoom.
@@ -163,7 +204,7 @@ override saved preferences; if a setting appears more than once, the last wins.
 | `--size WIDTHxHEIGHT` | Initial window size in pixels; default fits 80x25 cells at the text size in use |
 | `--width N`, `--height N` | Set dimensions separately; width 400-4096, height 280-2160 |
 | `--text-size N` | Initial zoom level, 1-6; default 6, lowered if needed to fit the screen |
-| `--colour green\|amber`, `--color green\|amber` | Choose phosphor colour |
+| `--colour green\|amber\|colour`, `--color ...` | Choose green or amber phosphor, or a colour CRT |
 | `--green`, `--amber` | Short aliases for phosphor colour |
 | `--fullscreen` | Start in desktop fullscreen; accepts `=true`, `=false`, `=1`, or `=0` |
 | `--windowed` | Start windowed |
@@ -172,7 +213,22 @@ override saved preferences; if a setting appears more than once, the last wins.
 | `--bitmap` | Use bitmap glyphs throughout instead of the mixed retro font |
 | `--shell /path/to/shell` | Select the shell executable |
 | `-e 'command'`, `--command 'command'` | Run a command inside the selected shell |
-| `-c 'command'` | Run a command at startup, then continue in an interactive shell |
+| `-c 'command'`, `--startup 'command'` | Run a command at startup, then continue in an interactive shell |
+| `-- program args...` | Run a program directly instead of a shell; must come last |
+| `--geometry COLUMNSxROWS` | Initial size in characters; default 80x25 |
+| `-d DIR`, `--working-directory DIR` | Start consoles in DIR |
+| `--title TEXT` | Replace "aterminal" in the window title |
+| `--maximized` | Start maximised |
+| `--console N` | Open on console N, 1-12 |
+| `--scrollback N` | Keep N history lines per console, 0-1000000; default 10000 |
+| `-l`, `--login` | Start a login shell |
+| `--hold` | Show the exit status when a console's process ends |
+| `--prompt STYLE`, `--prompt=list` | Choose the bash prompt, or give your own text; default `redhat`, `none` keeps yours |
+| `--cursor block\|bar\|underline` | Choose the cursor shape |
+| `--no-blink` | Keep the cursor steady |
+| `--scanlines N`, `--bloom N` | CRT effect strength, 0-100 percent; default 100 |
+| `--bell visual\|audible\|none` | Flash, click, or ignore the bell; default visual |
+| `--config FILE` | Read options from FILE |
 | `--demo` | Display the built-in font and terminal demonstration, then open a shell |
 | `--motd`, `--motd NAME`, `--motd=NAME` | Show a message of the day on each new console; no name picks at random |
 | `--motd=list` | List the available messages, then exit |
@@ -195,6 +251,7 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 | F1-F12 | Switch to that console, creating it on first use |
 | Ctrl+Shift+Alt+Plus / Minus | Increase / decrease text size |
 | Ctrl+Shift+A / G | Amber / green phosphor |
+| Ctrl+Shift+O | Toggle colour CRT |
 | Ctrl+Shift+S | Toggle AdLib key sounds; disabling clears queued sound |
 | Ctrl+Shift+R | Toggle CRT bloom, scanlines and vignette |
 | Ctrl+Shift+B | Toggle all-bitmap font mode |
@@ -204,17 +261,64 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 | Mouse drag | Select text; a single click clears selection |
 | Ctrl+C | Copy selected text and clear selection; interrupt when nothing is selected |
 | Ctrl+Shift+C | Copy selected text without sending an interrupt |
-| Ctrl+V / Ctrl+Shift+V / Shift+Insert / middle click | Paste |
+| Ctrl+V / Ctrl+Shift+V / Shift+Insert | Paste the clipboard |
+| Middle click | Paste the selected text, including text selected in other applications; the clipboard if nothing is selected |
 | Ctrl+Z / Ctrl+Y | Forward to the shell/application (usually suspend / yank in shells) |
 | Mouse wheel / Shift+PageUp / Shift+PageDown | Scrollback |
 | Ctrl+Shift+Enter | Restart the current shell after it exits |
 
-Right click opens the setup panel for phosphor colour, sound, CRT effects, and
+Right click opens the setup panel for display colour mode, sound, CRT effects, and
 font mode. Console switching remains function-key-only.
 
 Ctrl+Z and Ctrl+Y are passed through as terminal control characters, so editors
 and shells apply their own bindings. They do not undo or redo terminal output.
 Ctrl+Z normally suspends the foreground job; use `fg` in the shell to resume it.
+
+## Retro Prompts
+
+Under bash, aterminal starts with a period prompt, `redhat` by default. `--prompt`
+selects another. `~/.bashrc` still runs; only the prompt changes, and only in
+aterminal. Text before the final symbol is bold.
+
+| Style | Looks like | From |
+| --- | --- | --- |
+| `slackware` | `user@host:~/dir$` | Early Linux, 1993 |
+| `debian` | `host:~/dir$` | Early Debian |
+| `redhat` | `[user@host dir]$` | Classic Red Hat; the default |
+| `bsd` | `host%` | BSD csh |
+| `sunos` | `host 12%` | SunOS csh, with the history number |
+| `unix` | `$` | Basic UNIX prompt |
+| `bourne` | `$` | Original Unix shell |
+| `bash` | `bash-5.2$` | Stock bash with no startup files |
+| `dos` | `C:\HOME\USER>` | MS-DOS |
+| `none` | Your own prompt | Your shell startup files |
+
+To use your own text, pass anything containing a symbol or space, such as
+`--prompt='$'` or `--prompt='ready> '`. A space is added after it if needed, and bash
+prompt escapes such as `\h` and `\w` work. A plain word is treated as a style name,
+so a mistyped style gives an error.
+
+Choosing a prompt needs an interactive bash shell, so it cannot be combined with `-e`
+or `--`. The `$` becomes `#` for root, as it always has.
+
+## Config Files
+
+`--config FILE` reads one option per line, without the leading dashes, as
+`name value`, `name=value`, or `name`. Blank lines and lines starting with `#` are
+ignored. Options take effect where `--config` appears, so later command-line
+options override the file:
+
+```text
+# ~/.config/aterminal.conf
+colour colour
+prompt slackware
+geometry 132x43
+no-blink
+```
+
+```sh
+./build/aterminal --config ~/.config/aterminal.conf --amber
+```
 
 ## Sessions And Preferences
 
@@ -227,9 +331,11 @@ Each console starts its own PTY when first visited. Background consoles keep
 processing output. Window resizing and zoom changes update every open PTY's
 dimensions. An exited shell's screen remains available until restarted.
 
-Under bash, each console's prompt is bold up to the `$`, whatever colours your
-startup files set. aterminal runs `~/.bashrc` as usual and then adjusts `PS1`, so
-`~/.bashrc` itself is not changed. Other shells keep their own prompt.
+Under bash, consoles start with the classic Red Hat prompt; see
+[Retro Prompts](#retro-prompts). With `--prompt=none`, you keep the prompt from your
+startup files, bold up to the `$`. aterminal runs `~/.bashrc` as usual and then
+adjusts `PS1`, so `~/.bashrc` itself is not changed. Other shells keep their own
+prompt.
 
 Scrollback applies to the normal screen. Full-screen applications such as `vim`
 and `less` have none, so Shift+PageUp and Shift+PageDown do nothing inside them.
@@ -241,7 +347,8 @@ Sessions are not persistent or restored across launches. Save work before closin
 the window; use a session manager such as `tmux` when persistence is needed,
 subject to the compatibility limits below.
 
-Colour, sound, CRT effects, and font mode are saved on normal exit. Text zoom,
+Display colour mode, sound, CRT effects, and font mode are saved on normal exit.
+Other command-line options apply to that run only. Text zoom,
 window dimensions, fullscreen state, and shell sessions are not saved. SDL stores
 preferences at:
 
@@ -262,9 +369,9 @@ Stroke capitals and bitmap lowercase share a baseline at every zoom level.
 Supported terminal behaviour includes cursor movement, erase/insert/delete,
 scroll regions, tab stops, repeat, soft reset, DEC line graphics with G0/G1
 switching, saved cursor, alternate screens, cursor queries, application cursor
-keys, bracketed paste, and SGR text attributes. ANSI indexed
-and truecolour values are mapped to phosphor brightness rather than displayed in
-their original colours.
+keys, bracketed paste, and SGR text attributes. In green and
+amber modes, ANSI indexed and truecolour values are mapped to phosphor brightness.
+The colour CRT mode displays them in colour.
 
 ### Text Styles
 

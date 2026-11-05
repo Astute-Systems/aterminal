@@ -112,7 +112,7 @@ void Terminal::Scroll(int amount) {
         if (!alternate_ && top_ == 0 && bottom_ == rows_ - 1) {
             for (int line = 0; line < amount; ++line) {
                 history_.emplace_back(cells_.begin() + line * columns_, cells_.begin() + (line + 1) * columns_);
-                if (history_.size() > 10000) history_.pop_front();
+                if (static_cast<int>(history_.size()) > history_limit_) history_.pop_front();
             }
         }
         std::move(cells_.begin() + (top_ + amount) * columns_, cells_.begin() + (bottom_ + 1) * columns_, cells_.begin() + top_ * columns_);

@@ -11,7 +11,28 @@
 using softrender::Rgb;
 
 namespace {
-Rgb Phosphor(const Preferences& preferences) { return preferences.amber ? Rgb{255, 183, 65} : Rgb{85, 255, 144}; }
+constexpr Rgb kColourDefault{215, 222, 218}, kColourBold{255, 255, 255}, kColourRest{6, 7, 9};
+
+Rgb Phosphor(const Preferences& preferences) {
+    if (preferences.colour) return kColourDefault;
+    return preferences.amber ? Rgb{255, 183, 65} : Rgb{85, 255, 144};
+}
+
+// An ANSI, 256-colour or truecolour value on a colour tube. Bold brightens the
+// eight basic colours, as it did on the terminals that defined them.
+Rgb CellColour(int color, bool bold, Rgb fallback) {
+    static constexpr Rgb palette[16] = {
+        {0, 0, 0}, {205, 0, 0}, {0, 205, 0}, {205, 205, 0}, {30, 90, 238}, {205, 0, 205}, {0, 205, 205}, {229, 229, 229},
+        {127, 127, 127}, {255, 0, 0}, {0, 255, 0}, {255, 255, 0}, {92, 92, 255}, {255, 0, 255}, {0, 255, 255}, {255, 255, 255}};
+    const auto byte = [](int value) { return static_cast<std::uint8_t>(value); };
+    if (color < 0) return fallback;
+    if (color >= 0x1000000) return {byte((color >> 16) & 255), byte((color >> 8) & 255), byte(color & 255)};
+    if (color < 16) return palette[bold && color < 8 ? color + 8 : color];
+    if (color >= 232) return {byte(8 + (color - 232) * 10), byte(8 + (color - 232) * 10), byte(8 + (color - 232) * 10)};
+    const auto level = [](int step) { return step == 0 ? 0 : 55 + step * 40; };
+    const int cube = color - 16;
+    return {byte(level(cube / 36)), byte(level((cube / 6) % 6)), byte(level(cube % 6))};
+}
 
 // Line directions for the light box-drawing characters, or 0 for anything else.
 enum : int { kLeft = 1, kRight = 2, kUp = 4, kDown = 8 };
@@ -153,7 +174,7 @@ void Display::GlyphAt(softrender::Image& target, char32_t point, int left, int t
 void Display::Paint(const Terminal& terminal, int scrollback, const Preferences& preferences, bool cursor,
                     int selection_begin, int selection_end) {
     const Rgb phosphor = Phosphor(preferences);
-    const Rgb rest = preferences.amber ? Rgb{13, 8, 2} : Rgb{2, 12, 6};
+    const Rgb rest = preferences.colour ? kColourRest : preferences.amber ? Rgb{13, 8, 2} : Rgb{2, 12, 6};
     image.Clear(rest);
     const int cell_width = CellWidth(preferences), cell_height = CellHeight(preferences);
     const int history_size = static_cast<int>(terminal.History().size());
@@ -174,10 +195,16 @@ void Display::Paint(const Terminal& terminal, int scrollback, const Preferences&
             const int index = row * terminal.Columns() + col;
             const bool selected = selection_begin >= 0 && index >= selection_begin && index <= selection_end;
             // With one phosphor colour, black text on a coloured background is reverse video.
-            const bool inverse = (cell->inverse || (cell->foreground == 0 && cell->background > 0)) != selected;
-            const Rgb foreground = inverse ? rest : softrender::Scale(phosphor, Luminance(cell->foreground, cell->bold) * (cell->dim ? 0.6f : 1.0f));
+            const bool inverse = (cell->inverse || (!preferences.colour && cell->foreground == 0 && cell->background > 0)) != selected;
+            const float dim = cell->dim ? 0.6f : 1.0f;
+            Rgb foreground = inverse ? rest : softrender::Scale(phosphor, Luminance(cell->foreground, cell->bold) * dim);
             Rgb background = cell->background <= 0 ? rest : softrender::Scale(phosphor, Luminance(cell->background, false) * 0.25f);
             if (inverse) background = softrender::Scale(phosphor, 0.8f);
+            if (preferences.colour) {
+                foreground = softrender::Scale(CellColour(cell->foreground, cell->bold, cell->bold ? kColourBold : kColourDefault), dim);
+                background = cell->background <= 0 ? rest : CellColour(cell->background, false, rest);
+                if (inverse) std::swap(foreground, background);
+            }
             Rect(left, top, cell_width * span, cell_height, background);
             if (!cell->conceal) {
                 bool base = true;
@@ -207,8 +234,10 @@ void Display::Paint(const Terminal& terminal, int scrollback, const Preferences&
     if (!scrollback && cursor && terminal.CursorVisible()) {
         const int left = Margin + terminal.Column() * cell_width;
         const int top = Margin + terminal.Row() * cell_height;
-        for (int row = 0; row < cell_height; ++row)
-            for (int col = 0; col < cell_width; ++col) {
+        const int stroke = std::max(2, preferences.scale);
+        const bool bar = preferences.cursor == Preferences::Cursor::Bar, underline = preferences.cursor == Preferences::Cursor::Underline;
+        for (int row = underline ? cell_height - stroke : 0; row < cell_height; ++row)
+            for (int col = 0; col < (bar ? stroke : cell_width); ++col) {
                 const int px = left + col, py = top + row;
                 if (px >= static_cast<int>(image.width()) || py >= static_cast<int>(image.height())) continue;
                 auto* pixel = image.data() + (static_cast<std::size_t>(py) * image.width() + px) * 3;
@@ -220,31 +249,33 @@ void Display::Paint(const Terminal& terminal, int scrollback, const Preferences&
 }
 
 void Display::Settings(const Preferences& preferences) {
-    const int left = std::max(8, (static_cast<int>(image.width()) - 336) / 2);
-    const int top = std::max(8, (static_cast<int>(image.height()) - 264) / 2);
+    const int left = std::max(8, (static_cast<int>(image.width()) - SettingsWidth) / 2);
+    const int top = std::max(8, (static_cast<int>(image.height()) - SettingsHeight) / 2);
     const Rgb ink = Phosphor(preferences);
-    Rect(left - 2, top - 2, 340, 268, softrender::Scale(ink, 0.4f));
-    Rect(left, top, 336, 264, {6, 9, 7});
+    Rect(left - 2, top - 2, SettingsWidth + 4, SettingsHeight + 4, softrender::Scale(ink, 0.4f));
+    Rect(left, top, SettingsWidth, SettingsHeight, {6, 9, 7});
     softrender::DrawText(image, "TERMINAL SETUP", left + 24, top + 22, 2.0f, ink);
     const auto label = [&](const std::string& text, int row, bool active) {
         const int ypos = top + 65 + row * 40;
         Rect(left + 24, ypos, 16, 16, active ? ink : softrender::Scale(ink, 0.15f));
         softrender::DrawText(image, text, left + 56, ypos + 1, 1.7f, ink);
     };
-    label("GREEN PHOSPHOR", 0, !preferences.amber);
-    label("AMBER PHOSPHOR", 1, preferences.amber);
-    label("ADLIB KEY SOUND", 2, preferences.sound);
-    label("CRT EFFECTS", 3, preferences.crt);
-    label("BITMAP FONT", 4, preferences.bitmap);
+    label("GREEN PHOSPHOR", 0, !preferences.colour && !preferences.amber);
+    label("AMBER PHOSPHOR", 1, !preferences.colour && preferences.amber);
+    label("COLOUR CRT", 2, preferences.colour);
+    label("ADLIB KEY SOUND", 3, preferences.sound);
+    label("CRT EFFECTS", 4, preferences.crt);
+    label("BITMAP FONT", 5, preferences.bitmap);
 }
 
 void Display::Effects(const Preferences& preferences) {
     if (!preferences.crt) return;
-    softrender::Bloom(image, 0.6f, 100.0f, 4);
+    if (preferences.bloom > 0) softrender::Bloom(image, 0.6f * preferences.bloom / 100.0f, 100.0f, 4);
+    const float scanline_shade = 1.0f - 0.28f * preferences.scanlines / 100.0f;
     const int width = static_cast<int>(image.width()), height = static_cast<int>(image.height());
     softrender::ParallelRows(0, height, [&](int first, int last) {
         for (int row = first; row < last; ++row) {
-            const float scanline = row % 3 == 2 ? 0.72f : 1.0f;
+            const float scanline = row % 3 == 2 ? scanline_shade : 1.0f;
             for (int col = 0; col < width; ++col) {
                 const auto index = static_cast<std::size_t>(row) * width + col;
                 const float shade = shade_[index] * scanline;

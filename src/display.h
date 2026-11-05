@@ -11,7 +11,11 @@ struct Preferences {
     bool sound = true;
     bool crt = true;
     bool bitmap = false;
+    bool colour = false; // Colour CRT instead of a single phosphor
     int scale = 6;
+    // Set from the command line for each run; not saved.
+    enum class Cursor { Block, Bar, Underline } cursor = Cursor::Block;
+    int scanlines = 100, bloom = 100; // Percent of the normal CRT effect
 };
 
 class Display {
@@ -30,6 +34,7 @@ public:
     bool HasGlyph(char32_t point) const { return glyphs_.find(point) != glyphs_.end(); }
     bool Nonblank() const;
     static constexpr int Margin = 24;
+    static constexpr int SettingsWidth = 336, SettingsHeight = 304;
     static constexpr int MaxScale = 6;
 
 private:

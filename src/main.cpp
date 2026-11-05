@@ -1,5 +1,6 @@
 #include "display.h"
 #include "motd.h"
+#include "prompt.h"
 #include "session.h"
 #include "coriolis/adlib_synth.h"
 #include "softrender/png.h"
@@ -18,15 +19,45 @@
 
 namespace {
 
-constexpr int kDefaultColumns = 80, kDefaultRows = 25;
+constexpr std::size_t kMaxStartupCommand = 60000; // Must fit a pipe buffer; see Session
+constexpr int kMaxConfigFiles = 8;
+constexpr char kDefaultPrompt[] = "redhat";
+
+enum class Bell { Visual, Audible, None };
 
 struct Options {
     std::string shell = std::getenv("SHELL") ? std::getenv("SHELL") : "/bin/sh";
     std::string command, startup, screenshot, motd;
     int frames = 0;
     int width = 0, height = 0; // 0 sizes the window to the default console
-    bool self_test = false, fullscreen = false;
+    bool self_test = false, fullscreen = false, maximized = false, hold = false, no_blink = false;
+    std::string title = "aterminal";
+    int columns = 80, rows = 25, console = 1, scrollback = 10000;
+    Bell bell = Bell::Visual;
+    ShellOptions shell_options;
 };
+
+// Reads one option per line, as `name value`, `name=value` or `name`, without the
+// leading dashes. Blank lines and lines starting with # are ignored.
+std::vector<std::string> ConfigArguments(const std::string& path) {
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("Cannot read config file: " + path);
+    std::vector<std::string> arguments;
+    std::string line;
+    while (std::getline(file, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#') continue;
+        const auto last = line.find_last_not_of(" \t\r");
+        std::string option = line.substr(first, last - first + 1);
+        const auto separator = option.find_first_of(" \t=");
+        if (separator != std::string::npos && option[separator] != '=') {
+            const auto value = option.find_first_not_of(" \t", separator);
+            option = option.substr(0, separator) + "=" + option.substr(value);
+        }
+        arguments.push_back("--" + option);
+    }
+    return arguments;
+}
 
 int IntegerFlag(const std::string& value, int minimum, int maximum, const std::string& flag) {
     int result = 0;
@@ -92,10 +123,11 @@ public:
         : preferences_(preferences), options_(std::move(options)), config_(std::move(config)), display_(FontPath()) {
         if (options_.shell.empty() || options_.shell[0] != '/') throw std::runtime_error("--shell must be an absolute executable path");
         window_.reset(SDL_CreateWindow("aterminal", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, options_.width, options_.height,
-            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0)));
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) |
+            (options_.maximized ? SDL_WINDOW_MAXIMIZED : 0)));
         if (!window_) throw std::runtime_error(SDL_GetError());
         SDL_SetWindowMinimumSize(window_.get(), 400, 280);
-        if (options_.self_test) {
+        if (options_.self_test && !options_.maximized) {
             int width = 0, height = 0;
             SDL_GetWindowSize(window_.get(), &width, &height);
             const bool fullscreen = SDL_GetWindowFlags(window_.get()) & SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -106,7 +138,7 @@ public:
         if (!renderer_) renderer_.reset(SDL_CreateRenderer(window_.get(), -1, SDL_RENDERER_SOFTWARE));
         if (!renderer_) throw std::runtime_error(SDL_GetError());
         Resize();
-        Switch(0);
+        Switch(options_.console - 1);
         audio_.Enable(preferences_.sound);
         SDL_StartTextInput();
     }
@@ -157,7 +189,10 @@ public:
                     }
                     dirty_ = true;
                 } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
-                    if (dragging_ && selection_begin_ >= 0) selection_end_ = IndexAt(event.button.x, event.button.y);
+                    if (dragging_ && selection_begin_ >= 0) {
+                        selection_end_ = IndexAt(event.button.x, event.button.y);
+                        PublishSelection();
+                    }
                     dragging_ = false;
                     dirty_ = true;
                 }
@@ -192,6 +227,14 @@ public:
                     (frame == 37 && test_input_ != "ATERMINAL\x1a\x19\x03\x03+-") ||
                     ((frame == 36 || frame == 37) && preferences_.scale != original_scale))
                     throw std::runtime_error("Plain plus or minus did not type as text");
+                if (frame == 40 && test_input_ != "ATERMINAL\x1a\x19\x03\x03+-ATERMINAL")
+                    throw std::runtime_error("Middle click did not paste the selection");
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+                if (frame == 41 && test_input_ != "ATERMINAL\x1a\x19\x03\x03+-ATERMINALEXTERNAL")
+                    throw std::runtime_error("Middle click did not paste the system selection");
+#endif
+                if ((frame == 38 && preferences_.colour == test_colour_) || (frame == 39 && preferences_.colour != test_colour_))
+                    throw std::runtime_error("Ctrl+Shift+O colour CRT toggle failed");
                 if (frame >= 32 && frame <= 35) {
                     const int page = Current().terminal.Rows() - 1;
                     // Late shell output moves the anchored view by exactly the lines it adds.
@@ -207,10 +250,18 @@ public:
             for (std::size_t index = 0; index < sessions_.size(); ++index) {
                 if (sessions_[index] && sessions_[index]->Pump() && static_cast<int>(index) == active_) dirty_ = true;
                 if (sessions_[index] && sessions_[index]->terminal.TakeBell() && static_cast<int>(index) == active_) {
-                    flash_until_ = SDL_GetTicks64() + 100; dirty_ = true;
+                    if (options_.bell == Bell::Visual) flash_until_ = SDL_GetTicks64() + 100;
+                    else if (options_.bell == Bell::Audible) audio_.Click();
+                    dirty_ = true;
+                }
+                if (options_.hold && sessions_[index] && !sessions_[index]->Running() && !exit_shown_[index]) {
+                    exit_shown_[index] = true;
+                    sessions_[index]->terminal.Feed("\r\n\033[0m[exited with status " + std::to_string(sessions_[index]->ExitStatus()) +
+                                                    "; Ctrl+Shift+Enter restarts]\r\n");
+                    dirty_ = true;
                 }
             }
-            const bool cursor = (SDL_GetTicks64() / 550) % 2 == 0;
+            const bool cursor = options_.no_blink || (SDL_GetTicks64() / 550) % 2 == 0;
             if (flash_until_ && SDL_GetTicks64() >= flash_until_) { flash_until_ = 0; dirty_ = true; }
             if (cursor != last_cursor_) { dirty_ = true; last_cursor_ = cursor; }
             if (dirty_) {
@@ -229,7 +280,7 @@ public:
                 UpdateTitle();
                 dirty_ = false;
             }
-            if (++frame == (options_.self_test ? 40 : options_.frames)) running = false;
+            if (++frame == (options_.self_test ? 44 : options_.frames)) running = false;
             SDL_Delay(options_.self_test ? 10 : 8);
         }
         if (options_.self_test) {
@@ -238,9 +289,9 @@ public:
                 preferences_.sound != original_sound || active_ != 0 || !display_.Nonblank() ||
                 !display_.HasGlyph(0x1f600) || !display_.HasGlyph(0x4e16) || !audio_.HasSamples())
                 throw std::runtime_error("SDL interaction, font, rendering or audio-synthesis self-test failed");
-            if (std::string(SDL_GetWindowTitle(window_.get())) != Title() || Title().rfind("aterminal / F1 / ", 0) != 0)
+            if (std::string(SDL_GetWindowTitle(window_.get())) != Title() || Title().rfind(options_.title + " / F1 / ", 0) != 0)
                 throw std::runtime_error("Window title self-test failed");
-            std::cout << "12 consoles, F-keys, zoom, fullscreen, title, mouse selection, clipboard, Ctrl+C/V/Z/Y, Shift+PageUp/PageDown, phosphor, mute, Unicode glyphs and AdLib synthesis passed\n";
+            std::cout << "12 consoles, F-keys, zoom, fullscreen, title, mouse selection, clipboard, middle-click paste, Ctrl+C/V/Z/Y, Shift+PageUp/PageDown, phosphor, mute, Unicode glyphs and AdLib synthesis passed\n";
         }
         if (!options_.screenshot.empty() && !softrender::WritePng(display_.image, options_.screenshot))
             throw std::runtime_error("Could not write screenshot");
@@ -268,6 +319,9 @@ private:
     std::string test_input_;
     int test_zoom_direction_ = 1;
     int test_history_ = 0;
+    std::string selected_text_;
+    bool test_colour_ = false;
+    std::array<bool, 12> exit_shown_{};
     Session& Current() { return *sessions_[active_]; }
 
     void ClearSelection() { selection_begin_ = selection_end_ = selection_anchor_ = -1; dragging_ = false; }
@@ -289,9 +343,10 @@ private:
     void Switch(int index) {
         if (!sessions_[index]) {
             // The startup command runs once, in the first console opened.
-            const std::string command = options_.startup.empty() ? options_.command : ThenInteractiveShell(options_.startup, options_.shell);
-            sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, command);
-            options_.startup.clear();
+            sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, options_.command, options_.shell_options);
+            options_.shell_options.startup.clear();
+            sessions_[index]->terminal.SetHistoryLimit(options_.scrollback);
+            exit_shown_[index] = false;
             // Nothing has been pumped yet, so the message lands ahead of all shell output.
             if (!options_.motd.empty()) sessions_[index]->terminal.Feed(MotdText(options_.motd));
         }
@@ -301,7 +356,7 @@ private:
     }
 
     std::string Title() const {
-        return "aterminal / F" + std::to_string(active_ + 1) + " / " + std::to_string(display_.Columns(preferences_)) +
+        return options_.title + " / F" + std::to_string(active_ + 1) + " / " + std::to_string(display_.Columns(preferences_)) +
                "x" + std::to_string(display_.Rows(preferences_));
     }
 
@@ -331,18 +386,50 @@ private:
     void Paste() {
         char* text = SDL_GetClipboardText();
         if (!text) return;
+        const std::string contents = text;
+        SDL_free(text);
+        PasteText(contents);
+    }
+
+    // Middle click: the system-wide selection, then the last selection made here,
+    // then the clipboard.
+    void PasteSelection() {
+        std::string contents;
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+        if (char* text = SDL_GetPrimarySelectionText()) {
+            contents = text;
+            SDL_free(text);
+        }
+#endif
+        if (contents.empty()) contents = selected_text_;
+        if (contents.empty()) Paste();
+        else PasteText(contents);
+    }
+
+    void PasteText(const std::string& text) {
         std::string clean;
-        for (const char* byte = text; *byte && clean.size() < 1024 * 1024; ++byte) {
+        for (const char* byte = text.c_str(); *byte && clean.size() < 1024 * 1024; ++byte) {
             if (*byte == '\n') clean += '\r';
             else if (static_cast<unsigned char>(*byte) >= 32 || *byte == '\t') clean += *byte;
         }
-        SDL_free(text);
         if (Current().terminal.BracketedPaste()) clean = "\033[200~" + clean + "\033[201~";
         Input(clean);
     }
 
     void Copy() {
         if (selection_begin_ < 0) return;
+        if (SDL_SetClipboardText(SelectedText().c_str()) == 0) ClearSelection();
+        dirty_ = true;
+    }
+
+    void PublishSelection() {
+        selected_text_ = SelectedText();
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+        SDL_SetPrimarySelectionText(selected_text_.c_str());
+#endif
+    }
+
+    std::string SelectedText() {
         int begin = std::min(selection_begin_, selection_end_), end = std::max(selection_begin_, selection_end_);
         std::string result, line;
         const auto& terminal = Current().terminal;
@@ -360,8 +447,7 @@ private:
                 if (index != end) result += '\n';
             }
         }
-        if (SDL_SetClipboardText(result.c_str()) == 0) ClearSelection();
-        dirty_ = true;
+        return result;
     }
 
     int IndexAt(int mouse_x, int mouse_y) {
@@ -381,20 +467,21 @@ private:
             SDL_GetWindowSize(window_.get(), &width, &height);
             const int px = event.x * static_cast<int>(display_.image.width()) / std::max(width, 1);
             const int py = event.y * static_cast<int>(display_.image.height()) / std::max(height, 1);
-            const int left = std::max(8, (static_cast<int>(display_.image.width()) - 336) / 2);
-            const int top = std::max(8, (static_cast<int>(display_.image.height()) - 264) / 2);
-            if (px < left || px > left + 336 || py < top || py > top + 264) settings_ = false;
-            else if (py >= top + 60 && py < top + 260) {
+            const int left = std::max(8, (static_cast<int>(display_.image.width()) - Display::SettingsWidth) / 2);
+            const int top = std::max(8, (static_cast<int>(display_.image.height()) - Display::SettingsHeight) / 2);
+            if (px < left || px > left + Display::SettingsWidth || py < top || py > top + Display::SettingsHeight) settings_ = false;
+            else if (py >= top + 60 && py < top + 300) {
                 const int row = (py - top - 60) / 40;
-                if (row == 0) preferences_.amber = false;
-                else if (row == 1) preferences_.amber = true;
-                else if (row == 2) { preferences_.sound = !preferences_.sound; audio_.Enable(preferences_.sound); }
-                else if (row == 3) preferences_.crt = !preferences_.crt;
-                else if (row == 4) preferences_.bitmap = !preferences_.bitmap;
+                if (row == 0) { preferences_.amber = false; preferences_.colour = false; }
+                else if (row == 1) { preferences_.amber = true; preferences_.colour = false; }
+                else if (row == 2) preferences_.colour = true;
+                else if (row == 3) { preferences_.sound = !preferences_.sound; audio_.Enable(preferences_.sound); }
+                else if (row == 4) preferences_.crt = !preferences_.crt;
+                else if (row == 5) preferences_.bitmap = !preferences_.bitmap;
             }
             dirty_ = true; return;
         }
-        if (event.button == SDL_BUTTON_MIDDLE) Paste();
+        if (event.button == SDL_BUTTON_MIDDLE) PasteSelection();
         else if (event.button == SDL_BUTTON_LEFT) {
             ClearSelection();
             selection_anchor_ = IndexAt(event.x, event.y);
@@ -411,8 +498,9 @@ private:
         }
         if (key >= SDLK_F1 && key <= SDLK_F12) { Switch(static_cast<int>(key - SDLK_F1)); audio_.Click(); return; }
         if (control && shift) {
-            if (key == SDLK_a) preferences_.amber = true;
-            else if (key == SDLK_g) preferences_.amber = false;
+            if (key == SDLK_a) { preferences_.amber = true; preferences_.colour = false; }
+            else if (key == SDLK_g) { preferences_.amber = false; preferences_.colour = false; }
+            else if (key == SDLK_o) preferences_.colour = !preferences_.colour;
             else if (key == SDLK_s) { preferences_.sound = !preferences_.sound; audio_.Enable(preferences_.sound); }
             else if (key == SDLK_r) preferences_.crt = !preferences_.crt;
             else if (key == SDLK_b) preferences_.bitmap = !preferences_.bitmap;
@@ -521,6 +609,20 @@ private:
             SDL_PushEvent(&event);
             event.type = SDL_MOUSEBUTTONUP;
         }
+        else if (frame == 40 || frame == 41) {
+            // The selection from frame 24 wins over the clipboard, then one from elsewhere.
+            SDL_SetClipboardText("CLIPBOARD");
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+            if (frame == 41) SDL_SetPrimarySelectionText("EXTERNAL");
+#endif
+            event.type = SDL_MOUSEBUTTONDOWN;
+            event.button.button = SDL_BUTTON_MIDDLE;
+        }
+        else if (frame == 38 || frame == 39) {
+            if (frame == 38) test_colour_ = preferences_.colour;
+            event.key.keysym.mod = KMOD_CTRL | KMOD_SHIFT;
+            event.key.keysym.sym = SDLK_o;
+        }
         else if (frame == 36 || frame == 37) {
             event.type = SDL_TEXTINPUT;
             event.text.text[0] = frame == 36 ? '+' : '-';
@@ -543,7 +645,7 @@ private:
         const std::string temporary = config_ + "." + std::to_string(getpid()) + ".tmp";
         std::ofstream file(temporary);
         file << preferences_.amber << ' ' << preferences_.sound << ' ' << preferences_.crt << ' '
-             << preferences_.bitmap << '\n';
+             << preferences_.bitmap << ' ' << preferences_.colour << '\n';
         file.close();
         if (file) {
             std::error_code error;
@@ -576,30 +678,41 @@ int main(int argc, char** argv) {
         char* directory = SDL_GetPrefPath("ross-newman", "aterminal");
         const std::string config = directory ? std::string(directory) + "preferences" : "";
         SDL_free(directory);
-        bool testing = false, text_size_given = false;
-        for (int index = 1; index < argc; ++index) if (std::string(argv[index]) == "--self-test") testing = true;
+        std::vector<std::string> args(argv, argv + argc);
+        bool testing = false, text_size_given = false, geometry_given = false, prompt_chosen = false;
+        int config_files = 0;
+        for (std::size_t index = 1; index < args.size(); ++index) if (args[index] == "--self-test") testing = true;
         if (!testing) {
             std::ifstream file(config);
-            file >> preferences.amber >> preferences.sound >> preferences.crt >> preferences.bitmap;
+            file >> preferences.amber >> preferences.sound >> preferences.crt >> preferences.bitmap >> preferences.colour;
         }
-        for (int index = 1; index < argc; ++index) {
-            const std::string raw(argv[index]);
+        for (std::size_t index = 1; index < args.size(); ++index) {
+            const std::string raw = args[index];
+            if (raw == "--") {
+                options.shell_options.exec.assign(args.begin() + index + 1, args.end());
+                if (options.shell_options.exec.empty()) throw std::runtime_error("-- must be followed by a program");
+                break;
+            }
             const auto equal = raw.find('=');
             const bool inline_value = equal != std::string::npos;
             const std::string argument = raw.substr(0, equal);
             const bool takes_value = argument == "--size" || argument == "--width" || argument == "--height" ||
                 argument == "--text-size" || argument == "--colour" || argument == "--color" ||
                 argument == "--shell" || argument == "--command" || argument == "-e" || argument == "-c" ||
-                argument == "--screenshot" || argument == "--frames";
+                argument == "--startup" || argument == "--screenshot" || argument == "--frames" ||
+                argument == "--geometry" || argument == "-d" || argument == "--working-directory" ||
+                argument == "--title" || argument == "--scrollback" || argument == "--cursor" ||
+                argument == "--console" || argument == "--scanlines" || argument == "--bloom" ||
+                argument == "--bell" || argument == "--config" || argument == "--prompt";
             if (inline_value && !takes_value && argument != "--fullscreen" && argument != "--motd")
                 throw std::runtime_error(argument + " does not accept a value");
             const auto value = [&]() -> std::string {
                 if (inline_value) return raw.substr(equal + 1);
-                if (index + 1 >= argc) throw std::runtime_error("Missing value for " + argument);
-                return argv[++index];
+                if (index + 1 >= args.size()) throw std::runtime_error("Missing value for " + argument);
+                return args[++index];
             };
-            if (argument == "--amber") preferences.amber = true;
-            else if (argument == "--green") preferences.amber = false;
+            if (argument == "--amber") { preferences.amber = true; preferences.colour = false; }
+            else if (argument == "--green") { preferences.amber = false; preferences.colour = false; }
             else if (argument == "--no-sound") preferences.sound = false;
             else if (argument == "--sound") preferences.sound = true;
             else if (argument == "--no-crt") preferences.crt = false;
@@ -623,19 +736,82 @@ int main(int argc, char** argv) {
             else if (argument == "--text-size") { preferences.scale = IntegerFlag(value(), 1, Display::MaxScale, argument); text_size_given = true; }
             else if (argument == "--colour" || argument == "--color") {
                 const std::string colour = value();
-                if (colour != "green" && colour != "amber") throw std::runtime_error(argument + " must be green or amber");
+                if (colour != "green" && colour != "amber" && colour != "colour" && colour != "color")
+                    throw std::runtime_error(argument + " must be green, amber or colour");
                 preferences.amber = colour == "amber";
+                preferences.colour = colour == "colour" || colour == "color";
             }
             else if (argument == "--shell") options.shell = value();
             else if (argument == "--command" || argument == "-e") options.command = value();
-            else if (argument == "-c") options.startup = value();
+            else if (argument == "-c" || argument == "--startup") {
+                options.shell_options.startup = value();
+                if (options.shell_options.startup.size() > kMaxStartupCommand) throw std::runtime_error(argument + " command is too long");
+            }
+            else if (argument == "--prompt") {
+                const std::string name = value();
+                if (name == "list") {
+                    for (const Prompt& prompt : Prompts()) {
+                        std::string label = prompt.name;
+                        label.resize(std::max<std::size_t>(label.size(), 10), ' ');
+                        std::cout << label << ' ' << prompt.summary
+                                  << (label.rfind(kDefaultPrompt, 0) == 0 ? "  (default)" : "") << '\n';
+                    }
+                    std::cout << "none       Keep the prompt from your shell startup files\n"
+                                 "Anything containing a symbol or space is used as the prompt itself.\n";
+                    SDL_Quit(); return 0;
+                }
+                if (name != "none" && !PromptExists(name) && !IsCustomPrompt(name)) throw std::runtime_error("Unknown prompt: " + name + " (see --prompt=list; custom text needs a symbol or space)");
+                options.shell_options.prompt = name == "none" ? "" : name;
+                prompt_chosen = true;
+            }
+            else if (argument == "--geometry") {
+                const std::string dimensions = value();
+                const auto separator = dimensions.find_first_of("xX");
+                if (separator == std::string::npos) throw std::runtime_error("--geometry must be COLUMNSxROWS in characters");
+                options.columns = IntegerFlag(dimensions.substr(0, separator), 20, 500, "--geometry columns");
+                options.rows = IntegerFlag(dimensions.substr(separator + 1), 5, 200, "--geometry rows");
+                geometry_given = true;
+            }
+            else if (argument == "-d" || argument == "--working-directory") {
+                options.shell_options.directory = value();
+                if (!std::filesystem::is_directory(options.shell_options.directory))
+                    throw std::runtime_error("Not a directory: " + options.shell_options.directory);
+            }
+            else if (argument == "--title") options.title = value();
+            else if (argument == "--hold") options.hold = true;
+            else if (argument == "-l" || argument == "--login") options.shell_options.login = true;
+            else if (argument == "--scrollback") options.scrollback = IntegerFlag(value(), 0, 1000000, argument);
+            else if (argument == "--cursor") {
+                const std::string style = value();
+                if (style == "block") preferences.cursor = Preferences::Cursor::Block;
+                else if (style == "bar") preferences.cursor = Preferences::Cursor::Bar;
+                else if (style == "underline") preferences.cursor = Preferences::Cursor::Underline;
+                else throw std::runtime_error("--cursor must be block, bar or underline");
+            }
+            else if (argument == "--no-blink") options.no_blink = true;
+            else if (argument == "--console") options.console = IntegerFlag(value(), 1, 12, argument);
+            else if (argument == "--maximized") options.maximized = true;
+            else if (argument == "--scanlines") preferences.scanlines = IntegerFlag(value(), 0, 100, argument);
+            else if (argument == "--bloom") preferences.bloom = IntegerFlag(value(), 0, 100, argument);
+            else if (argument == "--bell") {
+                const std::string bell = value();
+                if (bell == "visual") options.bell = Bell::Visual;
+                else if (bell == "audible") options.bell = Bell::Audible;
+                else if (bell == "none") options.bell = Bell::None;
+                else throw std::runtime_error("--bell must be visual, audible or none");
+            }
+            else if (argument == "--config") {
+                if (++config_files > kMaxConfigFiles) throw std::runtime_error("Too many config files");
+                const auto lines = ConfigArguments(value());
+                args.insert(args.begin() + index + 1, lines.begin(), lines.end());
+            }
             else if (argument == "--screenshot") options.screenshot = value();
             else if (argument == "--frames") options.frames = IntegerFlag(value(), 1, 1000000, argument);
             else if (argument == "--demo") options.command = DemoCommand();
             else if (argument == "--motd") {
                 std::string name = "random";
                 if (inline_value) name = value();
-                else if (index + 1 < argc && argv[index + 1][0] != '-') name = argv[++index];
+                else if (index + 1 < args.size() && args[index + 1][0] != '-') name = args[++index];
                 if (name == "list") {
                     std::cout << "random    A different message on each console\n";
                     for (const Motd& message : Motds()) {
@@ -652,34 +828,52 @@ int main(int argc, char** argv) {
             else if (argument == "--help" || argument == "-h") {
                 std::cout << "aterminal [--green|--amber] [--no-sound|--sound] [--no-crt] [--bitmap]\n"
                     "          [--size WIDTHxHEIGHT] [--width N --height N] [--text-size 1..6]\n"
-                    "          [--colour green|amber] [--fullscreen[=true|false]|--windowed]\n"
+                    "          [--colour green|amber|colour] [--fullscreen[=true|false]|--windowed]\n"
                     "          [--shell /path/to/shell] [-e 'command'] [-c 'command'] [--demo]\n"
+                    "          [--geometry COLUMNSxROWS] [-d DIR] [--title TEXT] [--maximized]\n"
+                    "          [--console 1..12] [--scrollback N] [-l|--login] [--hold]\n"
+                    "          [--cursor block|bar|underline] [--no-blink]\n"
+                    "          [--scanlines 0..100] [--bloom 0..100] [--bell visual|audible|none]\n"
+                    "          [--prompt STYLE|list] [--config FILE] [-- program args...]\n"
                     "          [--motd[=NAME|random|list]]\n"
                     "          [-h|--help]\n"
                     "Value flags accept --flag=value or --flag value; --color aliases --colour.\n"
                     "F1-F12: consoles; Ctrl+Shift+Alt+Plus/Minus: zoom\n"
                     "Alt+Enter: fullscreen; Ctrl+Shift+F: fullscreen (alternative)\n"
-                    "Ctrl+Shift+A/G: amber/green; S: sound; R: CRT; B: bitmap\n"
-                    "Ctrl+C: copy selection, otherwise interrupt; Ctrl+V: paste\n"
+                    "Ctrl+Shift+A/G: amber/green; O: colour CRT; S: sound; R: CRT; B: bitmap\n"
+                    "Ctrl+C: copy selection, otherwise interrupt; Ctrl+V: paste; middle click: paste selection\n"
                     "Ctrl+Z/Y: forwarded to shell/app (usually suspend/yank in shells)\n"
                     "Ctrl+Shift+P or right click: setup; C/V: copy/paste; Enter: restart exited shell\n"
                     "Shift+PageUp/PageDown or wheel: scrollback; drag: selection\n";
                 SDL_Quit(); return 0;
             } else throw std::runtime_error("Unknown option: " + argument);
         }
-        if (!options.startup.empty() && !options.command.empty() && !options.self_test)
-            throw std::runtime_error("-c cannot be used with -e or --demo");
+        const ShellOptions& shell_options = options.shell_options;
+        if (!options.self_test) {
+            if (!shell_options.startup.empty() && !options.command.empty())
+                throw std::runtime_error("-c cannot be used with -e or --demo");
+            if (!shell_options.exec.empty() && (!options.command.empty() || !shell_options.startup.empty()))
+                throw std::runtime_error("-- cannot be used with -e, -c or --demo");
+            if (!shell_options.prompt.empty() && (!IsBash(options.shell) || !options.command.empty() || !shell_options.exec.empty()))
+                throw std::runtime_error("--prompt needs an interactive bash shell");
+        }
+        if (!prompt_chosen && IsBash(options.shell) && options.command.empty() && shell_options.exec.empty())
+            options.shell_options.prompt = kDefaultPrompt;
+        if (geometry_given && (options.width != 0 || options.height != 0))
+            throw std::runtime_error("--geometry cannot be used with --size, --width or --height");
         if (!options.self_test && !options.motd.empty() && options.command == DemoCommand())
             throw std::runtime_error("--motd cannot be used with --demo, which clears the screen");
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) throw std::runtime_error(SDL_GetError());
-        const auto default_width = [&] { return kDefaultColumns * Display::CellWidth(preferences) + Display::Margin * 2; };
-        const auto default_height = [&] { return kDefaultRows * Display::CellHeight(preferences) + Display::Margin * 2; };
+        const auto default_width = [&] { return options.columns * Display::CellWidth(preferences) + Display::Margin * 2; };
+        const auto default_height = [&] { return options.rows * Display::CellHeight(preferences) + Display::Margin * 2; };
         // Keep the default console whole on smaller screens by lowering the zoom.
         SDL_Rect usable{};
         if (!text_size_given && options.width == 0 && options.height == 0 && SDL_GetDisplayUsableBounds(0, &usable) == 0)
             while (preferences.scale > 1 && (default_width() > usable.w || default_height() > usable.h)) --preferences.scale;
-        if (options.width == 0) options.width = default_width();
-        if (options.height == 0) options.height = default_height();
+        if (options.width == 0) options.width = std::max(default_width(), 400);
+        if (options.height == 0) options.height = std::max(default_height(), 280);
+        if (options.width > 4096 || options.height > 2160)
+            throw std::runtime_error("Window would be larger than 4096x2160; use a smaller --geometry or --text-size");
         int result = 0;
         { Application application(preferences, options, options.self_test ? "" : config); result = application.Run(); }
         SDL_Quit();

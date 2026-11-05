@@ -35,6 +35,7 @@ public:
     bool BracketedPaste() const { return bracketed_paste_; }
     bool Alternate() const { return alternate_; }
     const std::deque<std::vector<Cell>>& History() const { return history_; }
+    void SetHistoryLimit(int lines) { history_limit_ = lines; }
     std::string TakeReply();
     bool TakeBell();
     const std::string& Title() const { return title_; }
@@ -45,7 +46,7 @@ private:
     enum class Parse { Ground, Escape, Csi, Osc, OscEscape, Charset, Ignore, IgnoreEscape };
     int rows_, columns_, row_ = 0, column_ = 0;
     int saved_row_ = 0, saved_column_ = 0, main_row_ = 0, main_column_ = 0;
-    int top_ = 0, bottom_ = 0, utf_remaining_ = 0;
+    int top_ = 0, bottom_ = 0, utf_remaining_ = 0, history_limit_ = 10000;
     char32_t utf_value_ = 0, utf_min_ = 0, repeat_ = 0;
     bool cursor_visible_ = true, application_cursor_ = false, bracketed_paste_ = false;
     bool alternate_ = false, wrap_ = true, pending_wrap_ = false, origin_ = false;

@@ -81,11 +81,11 @@ int main() {
             char home[] = "/tmp/aterminal-pty-XXXXXX";
             if (!mkdtemp(home)) throw std::runtime_error("mkdtemp failed");
             const std::string rc = std::string(home) + "/.bashrc";
-            std::ofstream(rc) << "PS1='\\[\\033[01;32m\\]ab\\[\\033[00m\\]:cd\\$ '\n";
+            std::ofstream(rc) << "PS1='\\[\\033[01;32m\\]ab\\[\\033[00m\\]:cd\\$ '\nalias hello='printf ALIASED'\n";
+            std::ofstream(std::string(home) + "/.profile") << "printf 'LOGIN%s\\n' RAN\n";
             setenv("HOME", home, 1);
             Session prompt(24, 80, "/bin/bash");
             Until(prompt, [&] { return Text(prompt.terminal).find("ab:cd$ ") != std::string::npos; });
-            std::filesystem::remove_all(home);
             int row = 0;
             while (Terminal::Utf8(prompt.terminal.At(row, 0).text) != "a" || Terminal::Utf8(prompt.terminal.At(row, 5).text) != "$") ++row;
             for (int column = 0; column < 5; ++column)
@@ -95,8 +95,46 @@ int main() {
             Until(prompt, [&] { return Text(prompt.terminal).find("\nFDS=") != std::string::npos; });
             if (Text(prompt.terminal).find("\nFDS= 0 1 2 255") == std::string::npos)
                 throw std::runtime_error("Bash startup pipe stayed open: " + Text(prompt.terminal));
+            ShellOptions alias_options;
+            alias_options.startup = "hello";
+            Session aliased(24, 80, "/bin/bash", {}, alias_options);
+            Until(aliased, [&] { return Text(aliased.terminal).find("ALIASED") != std::string::npos; });
+            Until(aliased, [&] { return Text(aliased.terminal).find("ab:cd$ ") != std::string::npos; });
+            ShellOptions style_options;
+            style_options.prompt = "redhat";
+            style_options.directory = "/usr";
+            Session styled(24, 80, "/bin/bash", {}, style_options);
+            Until(styled, [&] { return Text(styled.terminal).find(" usr]$ ") != std::string::npos; });
+            if (!styled.terminal.At(0, 0).bold) throw std::runtime_error("Prompt style is not bold");
+            style_options.prompt = "dos";
+            Session dos(24, 80, "/bin/bash", {}, style_options);
+            Until(dos, [&] { return Text(dos.terminal).find("C:\\USR>") != std::string::npos; });
+            style_options.prompt = "unix";
+            Session plain(24, 80, "/bin/bash", {}, style_options);
+            Until(plain, [&] { return Text(plain.terminal).find("$ ") == 0; });
+            style_options.prompt = "O'K>";
+            Session custom(24, 80, "/bin/bash", {}, style_options);
+            Until(custom, [&] { return Text(custom.terminal).find("O'K> ") != std::string::npos; });
+            ShellOptions login_options;
+            login_options.login = true;
+            Session login(24, 80, "/bin/bash", {}, login_options);
+            Until(login, [&] { return Text(login.terminal).find("LOGINRAN") != std::string::npos; });
+            std::filesystem::remove_all(home);
         }
-        std::cout << "PTY input, output, resize, exit, session isolation, control characters, scrollback and bold prompt passed\n";
+        ShellOptions direct;
+        direct.exec = {"printf", "EXEC%s\\n", "DIRECT"};
+        direct.directory = "/usr";
+        Session program(24, 80, "/bin/sh", {}, direct);
+        Until(program, [&] { return !program.Running(); });
+        program.Pump();
+        if (Text(program.terminal).find("EXECDIRECT") == std::string::npos) throw std::runtime_error("Direct program did not run");
+        ShellOptions in_directory;
+        in_directory.directory = "/usr";
+        Session located(24, 80, "/bin/sh", "pwd", in_directory);
+        Until(located, [&] { return !located.Running(); });
+        located.Pump();
+        if (Text(located.terminal).find("/usr") == std::string::npos) throw std::runtime_error("Working directory was not applied");
+        std::cout << "PTY input, output, resize, exit, session isolation, control characters, scrollback, prompts and shell options passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
