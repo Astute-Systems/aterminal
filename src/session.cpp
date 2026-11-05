@@ -15,6 +15,16 @@
 
 extern char** environ;
 
+std::string ThenInteractiveShell(const std::string& command, const std::string& shell) {
+    std::string quoted = "'";
+    for (char byte : shell) {
+        if (byte == '\'') quoted += "'\\''";
+        else quoted += byte;
+    }
+    // A newline, not a semicolon, so a trailing comment in the command stays harmless.
+    return command + "\nexec " + quoted + "' -i";
+}
+
 Session::Session(int rows, int columns, const std::string& shell, const std::string& command)
     : terminal(rows, columns) {
     std::vector<std::string> environment;

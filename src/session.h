@@ -4,6 +4,9 @@
 #include <string>
 #include <sys/types.h>
 
+// A shell command that runs `command`, then continues as an interactive `shell`.
+std::string ThenInteractiveShell(const std::string& command, const std::string& shell);
+
 class Session {
 public:
     Terminal terminal;

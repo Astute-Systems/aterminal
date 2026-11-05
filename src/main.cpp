@@ -19,7 +19,7 @@ namespace {
 
 struct Options {
     std::string shell = std::getenv("SHELL") ? std::getenv("SHELL") : "/bin/sh";
-    std::string command, screenshot;
+    std::string command, startup, screenshot;
     int frames = 0;
     int width = 1104, height = 768;
     bool self_test = false, fullscreen = false;
@@ -220,8 +220,8 @@ public:
                 preferences_.sound != original_sound || active_ != 0 || !display_.Nonblank() ||
                 !display_.HasGlyph(0x1f600) || !display_.HasGlyph(0x4e16) || !audio_.HasSamples())
                 throw std::runtime_error("SDL interaction, font, rendering or audio-synthesis self-test failed");
-            if (std::string(SDL_GetWindowTitle(window_.get())) != "aterminal / F1")
-                throw std::runtime_error("Simplified window title self-test failed");
+            if (std::string(SDL_GetWindowTitle(window_.get())) != Title() || Title().rfind("aterminal / F1 / ", 0) != 0)
+                throw std::runtime_error("Window title self-test failed");
             std::cout << "12 consoles, F-keys, zoom, fullscreen, title, mouse selection, clipboard, Ctrl+C/V/Z/Y, phosphor, mute, Unicode glyphs and AdLib synthesis passed\n";
         }
         if (!options_.screenshot.empty() && !softrender::WritePng(display_.image, options_.screenshot))
@@ -268,14 +268,24 @@ private:
     }
 
     void Switch(int index) {
-        if (!sessions_[index]) sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, options_.command);
+        if (!sessions_[index]) {
+            // The startup command runs once, in the first console opened.
+            const std::string command = options_.startup.empty() ? options_.command : ThenInteractiveShell(options_.startup, options_.shell);
+            sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, command);
+            options_.startup.clear();
+        }
         active_ = index;
         settings_ = false; ClearSelection(); dirty_ = true;
         UpdateTitle();
     }
 
+    std::string Title() const {
+        return "aterminal / F" + std::to_string(active_ + 1) + " / " + std::to_string(display_.Columns(preferences_)) +
+               "x" + std::to_string(display_.Rows(preferences_));
+    }
+
     void UpdateTitle() {
-        const std::string title = "aterminal / F" + std::to_string(active_ + 1);
+        const std::string title = Title();
         SDL_SetWindowTitle(window_.get(), title.c_str());
     }
 
@@ -546,7 +556,7 @@ int main(int argc, char** argv) {
             const std::string argument = raw.substr(0, equal);
             const bool takes_value = argument == "--size" || argument == "--width" || argument == "--height" ||
                 argument == "--text-size" || argument == "--colour" || argument == "--color" ||
-                argument == "--shell" || argument == "--command" || argument == "-e" ||
+                argument == "--shell" || argument == "--command" || argument == "-e" || argument == "-c" ||
                 argument == "--screenshot" || argument == "--frames";
             if (inline_value && !takes_value && argument != "--fullscreen")
                 throw std::runtime_error(argument + " does not accept a value");
@@ -585,6 +595,7 @@ int main(int argc, char** argv) {
             }
             else if (argument == "--shell") options.shell = value();
             else if (argument == "--command" || argument == "-e") options.command = value();
+            else if (argument == "-c") options.startup = value();
             else if (argument == "--screenshot") options.screenshot = value();
             else if (argument == "--frames") options.frames = IntegerFlag(value(), 1, 1000000, argument);
             else if (argument == "--demo") options.command = DemoCommand();
@@ -593,7 +604,7 @@ int main(int argc, char** argv) {
                 std::cout << "aterminal [--green|--amber] [--no-sound|--sound] [--no-crt] [--bitmap]\n"
                     "          [--size WIDTHxHEIGHT] [--width N --height N] [--text-size 1..5]\n"
                     "          [--colour green|amber] [--fullscreen[=true|false]|--windowed]\n"
-                    "          [--shell /path/to/shell] [-e 'command'] [--demo]\n"
+                    "          [--shell /path/to/shell] [-e 'command'] [-c 'command'] [--demo]\n"
                     "          [-h|--help]\n"
                     "Value flags accept --flag=value or --flag value; --color aliases --colour.\n"
                     "F1-F12: consoles; +/-: zoom; Ctrl+Shift+Plus/Minus: literal signs\n"
@@ -606,6 +617,8 @@ int main(int argc, char** argv) {
                 SDL_Quit(); return 0;
             } else throw std::runtime_error("Unknown option: " + argument);
         }
+        if (!options.startup.empty() && !options.command.empty() && !options.self_test)
+            throw std::runtime_error("-c cannot be used with -e or --demo");
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) throw std::runtime_error(SDL_GetError());
         int result = 0;
         { Application application(preferences, options, options.self_test ? "" : config); result = application.Run(); }

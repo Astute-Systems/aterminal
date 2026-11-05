@@ -48,6 +48,11 @@ int main() {
         controls.Pump();
         if (Text(controls.terminal).find("26 25") == std::string::npos || controls.ExitStatus() != 0)
             throw std::runtime_error("Ctrl+Z/Y bytes were not preserved through the PTY");
+        Session startup(24, 80, "/bin/sh", ThenInteractiveShell("printf 'RAN%s\\n' ONCE # comment", "/bin/sh"));
+        Until(startup, [&] { return Text(startup.terminal).find("RANONCE") != std::string::npos; });
+        startup.Send("printf 'STILL%s\\n' INTERACTIVE\n");
+        Until(startup, [&] { return Text(startup.terminal).find("STILLINTERACTIVE") != std::string::npos; });
+        if (!startup.Running()) throw std::runtime_error("Shell exited after the startup command");
         std::cout << "PTY input, output, resize, exit, session isolation and control characters passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

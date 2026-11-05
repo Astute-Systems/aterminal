@@ -1,3 +1,5 @@
+<p align="center"><img src="images/astute-terminal/Astute_Terminal_Icon_256.png" alt="aterminal icon" width="128"></p>
+
 # aterminal
 ![Badge for version](https://img.shields.io/badge/Version-0.1.0-blue)
 
@@ -108,22 +110,44 @@ requires an absolute executable path.
 ./build/aterminal --motd
 ./build/aterminal --motd=haiku --amber
 ./build/aterminal --shell /bin/bash -e 'htop'
+./build/aterminal -c 'cd ~/repos && git status'
 ./build/aterminal -h
 ```
 
 `-e` passes one command string to the selected shell using `-c`. Quote the
-command as one argument. That command is also used for newly opened consoles.
+command as one argument. That command is also used for newly opened consoles,
+and each console ends when its command does.
+
+`-c` also uses the shell's `-c`, but leaves you at an interactive prompt afterwards.
+It runs once, in the first console only, and cannot be combined with `-e` or
+`--demo`. Startup files such as `~/.bashrc` run for the prompt that follows, not
+for the command, so aliases are not available to it.
+
+The window title shows the console and its size in characters, such as
+`aterminal / F1 / 80x25`, and updates as you resize or zoom.
 
 ### Install
 
-Install for the current user without root access:
+`install.sh` builds aterminal, installs it, and refreshes the desktop menu, icon,
+and man page caches:
 
 ```sh
-cmake --install build --prefix "$HOME/.local"
-"$HOME/.local/bin/aterminal"
+./install.sh                 # /usr/local, using sudo if needed
+./install.sh --user          # $HOME/.local, without root access
+./install.sh --prefix /opt/aterminal
 ```
 
-Installation includes the executable, Unicode font data, documentation,
+To build and install a Debian package instead:
+
+```sh
+./install.sh --deb
+sudo apt install ./build/aterminal_0.1.0_amd64.deb
+```
+
+The package version comes from the `VERSION` file, and `apt` works out the
+library dependencies. Remove the package with `sudo apt remove aterminal`.
+
+Installation includes the executable, a desktop menu entry and icon, a man page, Unicode font data, documentation,
 screenshots, and upstream notices. Keep the installed font data alongside the
 executable's installation prefix; copying only the executable is not a portable
 installation.
@@ -148,6 +172,7 @@ override saved preferences; if a setting appears more than once, the last wins.
 | `--bitmap` | Use bitmap glyphs throughout instead of the mixed retro font |
 | `--shell /path/to/shell` | Select the shell executable |
 | `-e 'command'`, `--command 'command'` | Run a command inside the selected shell |
+| `-c 'command'` | Run a command at startup, then continue in an interactive shell |
 | `--demo` | Display the built-in font and terminal demonstration, then open a shell |
 | `--motd`, `--motd NAME`, `--motd=NAME` | Show a message of the day on each new console; no name picks at random |
 | `--motd=list` | List the available messages, then exit |

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=aterminal
+GenericName=Terminal
+Comment=Phosphor CRT terminal
+Exec=aterminal
+Icon=aterminal
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;terminal;crt;
+StartupNotify=true
+StartupWMClass=aterminal
