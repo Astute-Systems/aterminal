@@ -1,2 +1,37 @@
+# Build output
 /build*/
+/cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# Packages
+*.deb
+*.ddeb
+*.changes
+_CPack_Packages/
+
+# Compiled files
+*.o
+*.a
+*.so
+core
+core.*
+
+# Captures and marketing output
 *.bmp
+/docs/social/
+
+# Temporary files
+*.bak
+*.tmp
+*~
+*.swp
+
+# Editors and tools
+.cache/
+.clangd
+.idea/
+.vscode/
+
+# System files
+.DS_Store
