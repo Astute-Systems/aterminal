@@ -47,7 +47,7 @@ Actual application captures using the built-in demonstration session, at
 - UTF-8 input, CJK glyphs, combining marks, and basic monochrome emoji support.
 - Synthetic bold, italic, underline, reverse video, and strikethrough attributes.
 - Mouse selection, clipboard copy/paste, and 10,000 scrollback lines per console.
-- Resizable windows, five text zoom levels, and Alt+Enter fullscreen switching.
+- Resizable windows, six text zoom levels, and Alt+Enter fullscreen switching.
 - Optional synthesized key clicks; no recorded sound assets are required.
 
 The software renderer and AdLib synthesizer are reused directly from
@@ -160,9 +160,9 @@ override saved preferences; if a setting appears more than once, the last wins.
 | Flag | Purpose |
 | --- | --- |
 | `-h`, `--help` | Show flags and keyboard shortcuts, then exit |
-| `--size WIDTHxHEIGHT` | Initial window size in pixels; default fits 80x24 cells at the text size in use |
+| `--size WIDTHxHEIGHT` | Initial window size in pixels; default fits 80x25 cells at the text size in use |
 | `--width N`, `--height N` | Set dimensions separately; width 400-4096, height 280-2160 |
-| `--text-size N` | Initial zoom level, 1-5; default 4 before saved preferences |
+| `--text-size N` | Initial zoom level, 1-6; default 6, lowered if needed to fit the screen |
 | `--colour green\|amber`, `--color green\|amber` | Choose phosphor colour |
 | `--green`, `--amber` | Short aliases for phosphor colour |
 | `--fullscreen` | Start in desktop fullscreen; accepts `=true`, `=false`, `=1`, or `=0` |
@@ -193,8 +193,7 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 | Key | Action |
 | --- | --- |
 | F1-F12 | Switch to that console, creating it on first use |
-| + / - | Increase / decrease text size |
-| Ctrl+Shift+Plus / Minus | Send a literal + / - to the shell |
+| Ctrl+Shift+Alt+Plus / Minus | Increase / decrease text size |
 | Ctrl+Shift+A / G | Amber / green phosphor |
 | Ctrl+Shift+S | Toggle AdLib key sounds; disabling clears queued sound |
 | Ctrl+Shift+R | Toggle CRT bloom, scanlines and vignette |
@@ -219,21 +218,31 @@ Ctrl+Z normally suspends the foreground job; use `fg` in the shell to resume it.
 
 ## Sessions And Preferences
 
-The window opens at 80 columns by 24 rows unless a size is given. The pixel size
-follows the text zoom, so 80x24 at zoom 4 is 1968x1200; resizing or zooming later
-changes the row and column counts.
+The window opens at 80 columns by 25 rows unless a size is given. The pixel size
+follows the text zoom, so 80x25 at zoom 6 is 2928x1848. On a screen too small for
+that, the default zoom steps down until the console fits. Resizing or zooming
+later changes the row and column counts.
 
 Each console starts its own PTY when first visited. Background consoles keep
 processing output. Window resizing and zoom changes update every open PTY's
 dimensions. An exited shell's screen remains available until restarted.
+
+Under bash, each console's prompt is bold up to the `$`, whatever colours your
+startup files set. aterminal runs `~/.bashrc` as usual and then adjusts `PS1`, so
+`~/.bashrc` itself is not changed. Other shells keep their own prompt.
+
+Scrollback applies to the normal screen. Full-screen applications such as `vim`
+and `less` have none, so Shift+PageUp and Shift+PageDown do nothing inside them.
+A scrolled view stays on the same lines as new output arrives, and typing
+returns to the live screen.
 
 Closing the application closes its PTYs and terminates its shell processes.
 Sessions are not persistent or restored across launches. Save work before closing
 the window; use a session manager such as `tmux` when persistence is needed,
 subject to the compatibility limits below.
 
-Colour, sound, CRT effects, font mode, and text zoom are saved on normal exit.
-Window dimensions, fullscreen state, and shell sessions are not saved. SDL stores
+Colour, sound, CRT effects, and font mode are saved on normal exit. Text zoom,
+window dimensions, fullscreen state, and shell sessions are not saved. SDL stores
 preferences at:
 
 ```text
@@ -251,8 +260,9 @@ international characters, box drawing and monochrome emoji without a font librar
 Stroke capitals and bitmap lowercase share a baseline at every zoom level.
 
 Supported terminal behaviour includes cursor movement, erase/insert/delete,
-scroll regions, DEC line graphics, saved cursor, alternate screens, cursor queries,
-application cursor keys, bracketed paste, and SGR text attributes. ANSI indexed
+scroll regions, tab stops, repeat, soft reset, DEC line graphics with G0/G1
+switching, saved cursor, alternate screens, cursor queries, application cursor
+keys, bracketed paste, and SGR text attributes. ANSI indexed
 and truecolour values are mapped to phosphor brightness rather than displayed in
 their original colours.
 
@@ -276,8 +286,7 @@ does not implement every xterm sequence or claim formal VT100 certification.
 display the base glyph instead of a fully shaped ligature.
 - Complex-script shaping, bidirectional layout, and complete Unicode grapheme
 and character-width rules are not implemented. Missing glyphs show `?`.
-- Mouse reporting, sixel graphics, OSC clipboard access, custom tab stops, and
-DEC double-height text are not implemented.
+- Mouse reporting, sixel graphics, OSC clipboard access, and DEC double-height text are not implemented.
 - Windows and macOS are not supported by the Linux PTY implementation.
 
 The current tests exercise specific supported behaviour, not comprehensive
@@ -292,7 +301,6 @@ compatibility with every shell, editor, or terminal application.
 | Unicode bitmap font cannot be found | Keep `assets/unifont.hex` in the source tree, or reinstall with the font asset |
 | No audio device or unwanted key sounds | Start with `--no-sound`; audio-device failures do not stop the terminal |
 | Unexpected colour or text size | Supply `--colour` and `--text-size`, or reset the preferences file |
-| A command needs literal `+` or `-` | Use Ctrl+Shift+Plus / Minus, or paste the text |
 | An application needs F1-F12 | Use its alternative bindings; those keys are reserved for consoles |
 | A terminal application renders incorrectly | Check the known limits; use a fuller emulator for unsupported features |
 

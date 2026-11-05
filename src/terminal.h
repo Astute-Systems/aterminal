@@ -17,6 +17,7 @@ struct Cell {
     bool italic = false;
     bool conceal = false;
     bool strike = false;
+    bool dim = false;
 };
 
 class Terminal {
@@ -45,13 +46,17 @@ private:
     int rows_, columns_, row_ = 0, column_ = 0;
     int saved_row_ = 0, saved_column_ = 0, main_row_ = 0, main_column_ = 0;
     int top_ = 0, bottom_ = 0, utf_remaining_ = 0;
-    char32_t utf_value_ = 0, utf_min_ = 0;
+    char32_t utf_value_ = 0, utf_min_ = 0, repeat_ = 0;
     bool cursor_visible_ = true, application_cursor_ = false, bracketed_paste_ = false;
     bool alternate_ = false, wrap_ = true, pending_wrap_ = false, origin_ = false;
     bool insert_ = false, dec_graphics_ = false, bell_ = false, join_next_ = false;
+    bool g1_graphics_ = false, shift_out_ = false;
+    bool saved_origin_ = false, saved_wrap_ = true, saved_graphics_ = false, saved_g1_graphics_ = false, saved_shift_out_ = false;
+    int charset_slot_ = 0; // 0 G0, 1 G1, 2 a two-byte sequence aterminal ignores
     Parse parse_ = Parse::Ground;
     Cell pen_, saved_pen_;
     std::vector<Cell> cells_, main_cells_;
+    std::vector<bool> tabs_;
     std::deque<std::vector<Cell>> history_;
     std::string sequence_, reply_, title_;
     Cell Blank() const;
@@ -64,5 +69,7 @@ private:
     void Save();
     void Restore();
     void Reset();
+    void SoftReset();
+    void DefaultTabs(int from);
     void RepairLine(int row);
 };

@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
         Terminal terminal(display.Rows(preferences), display.Columns(preferences));
         for (bool bitmap : {false, true}) {
             preferences.bitmap = bitmap;
-            for (int scale = 1; scale <= 5; ++scale) {
+            for (int scale = 1; scale <= Display::MaxScale; ++scale) {
                 preferences.scale = scale;
                 terminal.Resize(display.Rows(preferences), display.Columns(preferences));
                 terminal.Feed("\033[2J\033[HHnhxg");
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
             Check(display.HasGlyph(point), "missing Unicode glyph");
             terminal.Feed("\033[2J\033[H" + Terminal::Utf8(std::u32string(1, point)));
             display.Paint(terminal, 0, preferences, false);
-            Check(Bright(display.image, Display::Margin, Display::Margin, 24, 24) > 3, "blank glyph render");
+            Check(Bright(display.image, Display::Margin, Display::Margin, display.CellWidth(preferences), display.CellHeight(preferences)) > 3, "blank glyph render");
         }
         terminal.Feed("\033[2J\033[HHello \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x98\x80");
         display.Paint(terminal, 0, preferences, true);
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
             red += display.image.data()[index]; green += display.image.data()[index + 1];
         }
         Check(red > green, "amber palette");
-        for (int scale = 1; scale <= 5; ++scale) {
+        for (int scale = 1; scale <= Display::MaxScale; ++scale) {
             preferences.scale = scale;
             display.Resize(400, 280);
             terminal.Resize(display.Rows(preferences), display.Columns(preferences));
@@ -100,6 +100,31 @@ int main(int argc, char** argv) {
             display.Effects(preferences);
             Check(display.Nonblank(), "small-window rendering");
         }
+        preferences.scale = 3;
+        display.Resize(1024, 720);
+        terminal.Resize(display.Rows(preferences), display.Columns(preferences));
+        const int cell_width = display.CellWidth(preferences), cell_height = display.CellHeight(preferences);
+        for (bool bitmap : {false, true}) {
+            preferences.bitmap = bitmap;
+            terminal.Feed("\033[2J\033[H\033(0lqk\r\nx x\r\nmqj\033(B");
+            display.Paint(terminal, 0, preferences, false);
+            const int middle_x = Display::Margin + cell_width / 2, middle_y = Display::Margin + cell_height / 2;
+            for (int x = middle_x; x < Display::Margin + cell_width * 2 + cell_width / 2; ++x)
+                Check(Bright(display.image, x, middle_y - 1, 1, 3) > 0, "horizontal line joins its neighbours");
+            for (int y = middle_y; y < Display::Margin + cell_height * 2 + cell_height / 2; ++y)
+                Check(Bright(display.image, middle_x - 1, y, 3, 1) > 0, "vertical line joins its neighbours");
+        }
+        preferences.bitmap = false;
+        terminal.Feed("\033[2J\033[H\033[0m ");
+        display.Paint(terminal, 0, preferences, false);
+        const auto rest_pixels = display.image;
+        terminal.Feed("\033[2J\033[H\033[40m \033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(display.image == rest_pixels, "explicit black background matches the screen");
+        terminal.Feed("\033[2J\033[H\033[30;42mU\033[0m");
+        display.Paint(terminal, 0, preferences, false);
+        Check(Bright(display.image, Display::Margin, Display::Margin, cell_width, cell_height) >
+              static_cast<std::size_t>(cell_width * cell_height / 2), "black on colour reads as reverse video");
         preferences.bitmap = true;
         display.Paint(terminal, 0, preferences, true);
         Check(display.Nonblank(), "bitmap mode");

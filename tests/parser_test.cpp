@@ -21,6 +21,55 @@ int main() {
         Check(!terminal.At(0, 3).bold && !terminal.At(0, 3).italic, "SGR italic reset");
         terminal.Feed("\033[1;1H\033[31;1mRed\033[0m");
         terminal.Feed("\033[?1049hAlternate\033[?1049l");
+        {
+            Terminal margins(10, 20);
+            margins.Feed("\033[3;6r\033[5;1H\033[9B");
+            Check(margins.Row() == 5, "cursor down stops at the bottom margin");
+            margins.Feed("\033[5;1H\033[9A");
+            Check(margins.Row() == 2, "cursor up stops at the top margin");
+            margins.Feed("\033[9;1H\033[9B");
+            Check(margins.Row() == 9, "cursor below the region moves to the screen edge");
+            margins.Feed("\033[2;1H\033[9A");
+            Check(margins.Row() == 0, "cursor above the region moves to the screen edge");
+            margins.Feed("\033[?6h\033(0\0337\033[?6l\033(B\033[?7l\0338");
+            margins.Feed("\033[1;1Hq\033(B");
+            Check(margins.Row() == 2 && margins.At(2, 0).text == U"\u2500", "restore cursor brings back origin mode and charset");
+            margins.Feed("\033[?6l\033[?7h\033[1;1H\0337\033[?7l\0338\033[1;20Hab");
+            Check(margins.At(1, 0).text == U"b", "restore cursor brings back autowrap");
+            Terminal sets(4, 20);
+            sets.Feed("\033)0a\x0eq\x0fq\033(0q\033(B");
+            Check(sets.At(0, 0).text == U"a" && sets.At(0, 1).text == U"\u2500", "SO selects G1");
+            Check(sets.At(0, 2).text == U"q" && sets.At(0, 3).text == U"\u2500", "SI selects G0");
+            sets.Feed("\033[2;1H\033%Gx\033*0y\033#3z");
+            Check(sets.At(1, 0).text == U"x" && sets.At(1, 1).text == U"y" && sets.At(1, 2).text == U"z", "two-byte escapes print nothing");
+            sets.Feed("\033[3;1H\033[>4;2mp\033[2mq\033[22mr");
+            Check(!sets.At(2, 0).underline && !sets.At(2, 0).dim, "modifier key mode is not SGR");
+            Check(sets.At(2, 1).dim && !sets.At(2, 2).dim, "SGR dim");
+            sets.Feed("\033[4;1Habc\033[4;1H\033[1 @");
+            Check(sets.At(3, 0).text == U"a", "intermediates do not fall through");
+            sets.Feed("\033[1;3r\033[?6h\033[4h\033[1m\033(0\033[!p\033[1;1Hq");
+            Check(sets.At(0, 0).text == U"q" && !sets.At(0, 0).bold, "soft reset clears the pen and charset");
+            sets.Feed("\033[>c");
+            Check(sets.TakeReply() == "\033[>0;0;0c", "secondary device attributes");
+        }
+        {
+            Terminal repeat(4, 10);
+            repeat.Feed("-\033[3b+\033[2;1H\033(0q\033[4bx\033(B");
+            Check(repeat.At(0, 3).text == U"-" && repeat.At(0, 4).text == U"+", "repeat preceding character");
+            Check(repeat.At(1, 4).text == U"\u2500" && repeat.At(1, 5).text == U"\u2502", "repeat DEC line drawing");
+            repeat.Feed("\033[3;9Hab\033[2bc");
+            Check(repeat.At(3, 1).text == U"b" && repeat.At(3, 2).text == U"c", "repeat wraps at the margin");
+            repeat.Feed("\033[4;1H\033[K\033[1;20H\033[Z");
+            Check(repeat.Column() == 8, "back tab");
+            repeat.Feed("\033[Z\033[Z");
+            Check(repeat.Column() == 0, "back tab stops at the margin");
+            repeat.Feed("\033[1;4H\033H\033[1;1H\t");
+            Check(repeat.Column() == 3, "set tab stop");
+            repeat.Feed("\033[3g\033[1;1H\t");
+            Check(repeat.Column() == 9, "clear all tab stops");
+            repeat.Feed("\033c\t");
+            Check(repeat.Column() == 8, "reset restores tab stops");
+        }
         Check(terminal.At(0, 0).text == U"R", "alternate screen restore");
         terminal.Feed("\033[5;1H\033(0lqqk\033(B");
         Check(terminal.At(4, 0).text == U"\u250c", "DEC graphics");

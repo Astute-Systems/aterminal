@@ -15,6 +15,24 @@
 
 extern char** environ;
 
+namespace {
+
+// Passed to bash in place of ~/.bashrc: runs that as usual, then removes its colour
+// resets so bold carries through to the final "\$ ". The "$" stays normal weight.
+constexpr char kBashStartup[] =
+    R"([ -f ~/.bashrc ] && . ~/.bashrc
+if [[ $PS1 == *'\$ ' ]]; then
+    PS1=${PS1//'\[\033[00m\]'/}
+    PS1='\[\033[1m\]'${PS1%'\$ '}'\[\033[0m\]\$ '
+fi
+)";
+
+bool IsBash(const std::string& shell) {
+    return shell.substr(shell.rfind('/') + 1) == "bash";
+}
+
+}
+
 std::string ThenInteractiveShell(const std::string& command, const std::string& shell) {
     std::string quoted = "'";
     for (char byte : shell) {
@@ -39,6 +57,16 @@ Session::Session(int rows, int columns, const std::string& shell, const std::str
     for (auto& entry : environment) env.push_back(entry.data());
     env.push_back(nullptr);
     std::vector<std::string> arguments{shell};
+    int startup[2] = {-1, -1};
+    if (command.empty() && IsBash(shell) && pipe(startup) == 0) {
+        // Far smaller than a pipe buffer, so this cannot block; bash reads it at start-up.
+        const std::string script = kBashStartup + ("exec " + std::to_string(startup[0]) + "<&-\n");
+        const auto ignored = write(startup[1], script.data(), script.size());
+        (void)ignored;
+        close(startup[1]);
+        arguments.emplace_back("--rcfile");
+        arguments.push_back("/dev/fd/" + std::to_string(startup[0]));
+    }
     if (command.empty()) arguments.emplace_back("-i");
     else { arguments.emplace_back("-c"); arguments.push_back(command); }
     std::vector<char*> argv;
@@ -48,6 +76,7 @@ Session::Session(int rows, int columns, const std::string& shell, const std::str
     size.ws_row = static_cast<unsigned short>(terminal.Rows());
     size.ws_col = static_cast<unsigned short>(terminal.Columns());
     child_ = forkpty(&master_, nullptr, nullptr, &size);
+    if (child_ != 0 && startup[0] >= 0) close(startup[0]);
     if (child_ < 0) throw std::runtime_error(std::string("forkpty: ") + std::strerror(errno));
     if (child_ == 0) {
         execve(shell.c_str(), argv.data(), env.data());
@@ -87,6 +116,7 @@ void Session::Send(std::string_view bytes) {
 
 bool Session::Pump() {
     bool changed = false;
+    const int history_before = static_cast<int>(terminal.History().size());
     char buffer[16384];
     for (int batch = 0; master_ >= 0 && batch < 16; ++batch) {
         const ssize_t count = read(master_, buffer, sizeof(buffer));
@@ -98,7 +128,14 @@ bool Session::Pump() {
             close(master_); master_ = -1; pending_.clear(); break;
         } else break;
     }
-    if (changed) Send(terminal.TakeReply());
+    if (changed) {
+        // Keep a scrolled view on the same lines as output arrives; a full-screen
+        // application has no scrollback, so return to the live screen for it.
+        const int history = static_cast<int>(terminal.History().size());
+        if (terminal.Alternate()) scrollback_ = 0;
+        else if (scrollback_ > 0) scrollback_ = std::clamp(scrollback_ + history - history_before, 0, history);
+        Send(terminal.TakeReply());
+    }
     Flush();
     if (child_ > 0) {
         int status = 0;

@@ -13,6 +13,25 @@ using softrender::Rgb;
 namespace {
 Rgb Phosphor(const Preferences& preferences) { return preferences.amber ? Rgb{255, 183, 65} : Rgb{85, 255, 144}; }
 
+// Line directions for the light box-drawing characters, or 0 for anything else.
+enum : int { kLeft = 1, kRight = 2, kUp = 4, kDown = 8 };
+int BoxLines(char32_t point) {
+    switch (point) {
+    case 0x2500: return kLeft | kRight;
+    case 0x2502: return kUp | kDown;
+    case 0x250c: return kRight | kDown;
+    case 0x2510: return kLeft | kDown;
+    case 0x2514: return kRight | kUp;
+    case 0x2518: return kLeft | kUp;
+    case 0x251c: return kRight | kUp | kDown;
+    case 0x2524: return kLeft | kUp | kDown;
+    case 0x252c: return kLeft | kRight | kDown;
+    case 0x2534: return kLeft | kRight | kUp;
+    case 0x253c: return kLeft | kRight | kUp | kDown;
+    default: return 0;
+    }
+}
+
 float Luminance(int color, bool bold) {
     if (color < 0) return bold ? 1.0f : 0.84f;
     if (color >= 0x1000000) {
@@ -154,17 +173,30 @@ void Display::Paint(const Terminal& terminal, int scrollback, const Preferences&
             const int span = std::min(cell->width, terminal.Columns() - col);
             const int index = row * terminal.Columns() + col;
             const bool selected = selection_begin >= 0 && index >= selection_begin && index <= selection_end;
-            const bool inverse = cell->inverse != selected;
-            const Rgb foreground = inverse ? rest : softrender::Scale(phosphor, Luminance(cell->foreground, cell->bold));
-            Rgb background = cell->background < 0 ? rest : softrender::Scale(phosphor, Luminance(cell->background, false) * 0.25f);
+            // With one phosphor colour, black text on a coloured background is reverse video.
+            const bool inverse = (cell->inverse || (cell->foreground == 0 && cell->background > 0)) != selected;
+            const Rgb foreground = inverse ? rest : softrender::Scale(phosphor, Luminance(cell->foreground, cell->bold) * (cell->dim ? 0.6f : 1.0f));
+            Rgb background = cell->background <= 0 ? rest : softrender::Scale(phosphor, Luminance(cell->background, false) * 0.25f);
             if (inverse) background = softrender::Scale(phosphor, 0.8f);
             Rect(left, top, cell_width * span, cell_height, background);
             if (!cell->conceal) {
                 bool base = true;
                 for (char32_t point : cell->text) {
                     if (!base && Terminal::Width(point) > 0) continue;
-                        GlyphAt(image, point, left, top + 1, cell_width * span, cell_height - 2,
+                    if (const int lines = base ? BoxLines(point) : 0) {
+                        // Drawn to the cell edges, unlike a font glyph, so neighbours join up.
+                        const int thick = preferences.scale * (cell->bold ? 2 : 1);
+                        const int x = left + (cell_width - thick) / 2, y = top + (cell_height - thick) / 2;
+                        if (lines & kLeft) Rect(left, y, x + thick - left, thick, foreground);
+                        if (lines & kRight) Rect(x, y, left + cell_width - x, thick, foreground);
+                        if (lines & kUp) Rect(x, top, thick, y + thick - top, foreground);
+                        if (lines & kDown) Rect(x, y, thick, top + cell_height - y, foreground);
+                    } else {
+                        // Other box and block characters also fill the cell so they tile.
+                        const int inset = point >= 0x2500 && point <= 0x259f ? 0 : 1;
+                        GlyphAt(image, point, left, top + inset, cell_width * span, cell_height - inset * 2,
                             foreground, preferences.bitmap, cell->bold, cell->italic);
+                    }
                     base = false;
                 }
             }

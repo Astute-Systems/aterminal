@@ -11,7 +11,7 @@ struct Preferences {
     bool sound = true;
     bool crt = true;
     bool bitmap = false;
-    int scale = 2;
+    int scale = 6;
 };
 
 class Display {
@@ -19,8 +19,8 @@ public:
     explicit Display(const std::string& font_path);
     softrender::Image image{1024, 720};
     void Resize(int width, int height);
-    int CellWidth(const Preferences& preferences) const { return preferences.scale * 6; }
-    int CellHeight(const Preferences& preferences) const { return preferences.scale * 12; }
+    static int CellWidth(const Preferences& preferences) { return preferences.scale * 6; }
+    static int CellHeight(const Preferences& preferences) { return preferences.scale * 12; }
     int Rows(const Preferences& preferences) const;
     int Columns(const Preferences& preferences) const;
     void Paint(const Terminal& terminal, int scrollback, const Preferences& preferences, bool cursor,
@@ -30,6 +30,7 @@ public:
     bool HasGlyph(char32_t point) const { return glyphs_.find(point) != glyphs_.end(); }
     bool Nonblank() const;
     static constexpr int Margin = 24;
+    static constexpr int MaxScale = 6;
 
 private:
     struct Glyph { int width = 8; std::array<std::uint32_t, 16> rows{}; };
