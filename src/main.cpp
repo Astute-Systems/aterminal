@@ -170,13 +170,7 @@ public:
                     dirty_ = true;
                 } else if (event.type == SDL_KEYDOWN) Key(event.key);
                 else if (event.type == SDL_TEXTINPUT && !settings_) {
-                    const std::string text(event.text.text);
-                    const SDL_Keymod held = SDL_GetModState();
-                    // The window shortcuts below are chords, so they must not also type.
-                    if (!((held & KMOD_CTRL) && (held & KMOD_SHIFT) && (held & KMOD_ALT))) {
-                        if (held & KMOD_ALT) Current().Send("\033");
-                        Input(text);
-                    }
+                    TextInput(event.text.text);
                 } else if (event.type == SDL_MOUSEWHEEL && !settings_) {
                     Current().Scroll(event.wheel.y * 3);
                     ClearSelection(); dirty_ = true;
@@ -412,6 +406,14 @@ private:
         else PasteText(contents);
     }
 
+    void TextInput(const std::string& text) {
+        const SDL_Keymod held = SDL_GetModState();
+        // The window shortcuts are chords, so they must not also type.
+        if ((held & KMOD_CTRL) && (held & KMOD_SHIFT) && (held & KMOD_ALT)) return;
+        if (held & KMOD_ALT) Current().Send("\033");
+        Input(text);
+    }
+
     void PasteText(const std::string& text) {
         std::string clean;
         for (const char* byte = text.c_str(); *byte && clean.size() < 1024 * 1024; ++byte) {
@@ -630,8 +632,9 @@ private:
             event.key.keysym.sym = SDLK_o;
         }
         else if (frame == 36 || frame == 37) {
-            event.type = SDL_TEXTINPUT;
-            event.text.text[0] = frame == 36 ? '+' : '-';
+            // Called directly because sdl2-compat cannot push a text event through SDL3.
+            TextInput(frame == 36 ? "+" : "-");
+            return;
         }
         else if (frame >= 32 && frame <= 35) {
             if (frame == 32) {
