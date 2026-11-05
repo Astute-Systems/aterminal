@@ -105,6 +105,8 @@ requires an absolute executable path.
 ./build/aterminal --colour=amber --size=1280x800 --text-size=3
 ./build/aterminal --green --fullscreen --no-sound
 ./build/aterminal --demo
+./build/aterminal --motd
+./build/aterminal --motd=haiku --amber
 ./build/aterminal --shell /bin/bash -e 'htop'
 ./build/aterminal -h
 ```
@@ -134,9 +136,9 @@ override saved preferences; if a setting appears more than once, the last wins.
 | Flag | Purpose |
 | --- | --- |
 | `-h`, `--help` | Show flags and keyboard shortcuts, then exit |
-| `--size WIDTHxHEIGHT` | Initial window size in pixels; default 1104x768 |
+| `--size WIDTHxHEIGHT` | Initial window size in pixels; default fits 80x24 cells at the text size in use |
 | `--width N`, `--height N` | Set dimensions separately; width 400-4096, height 280-2160 |
-| `--text-size N` | Initial zoom level, 1-5; default 2 before saved preferences |
+| `--text-size N` | Initial zoom level, 1-5; default 4 before saved preferences |
 | `--colour green\|amber`, `--color green\|amber` | Choose phosphor colour |
 | `--green`, `--amber` | Short aliases for phosphor colour |
 | `--fullscreen` | Start in desktop fullscreen; accepts `=true`, `=false`, `=1`, or `=0` |
@@ -147,9 +149,16 @@ override saved preferences; if a setting appears more than once, the last wins.
 | `--shell /path/to/shell` | Select the shell executable |
 | `-e 'command'`, `--command 'command'` | Run a command inside the selected shell |
 | `--demo` | Display the built-in font and terminal demonstration, then open a shell |
+| `--motd`, `--motd NAME`, `--motd=NAME` | Show a message of the day on each new console; no name picks at random |
+| `--motd=list` | List the available messages, then exit |
 | `--self-test` | Run the SDL interaction checks without loading or saving preferences |
 | `--frames N` | Exit after N event-loop iterations, 1-1000000; not a duration in seconds |
 | `--screenshot PATH` | Save the final rendered display as PNG when the application exits |
+
+`--motd` messages are `welcome`, `tips`, `sysop`, `phosphor`, `unix`, `haiku`,
+`bbs`, and `launch`. With `random`, each console picks its own, and a restarted
+shell picks again. `--motd` cannot be combined with `--demo`, which clears the
+screen.
 
 Fullscreen follows the desktop display size. The window size specifies the
 windowed dimensions. Alt+Enter switches modes without consuming a console key.
@@ -184,6 +193,10 @@ and shells apply their own bindings. They do not undo or redo terminal output.
 Ctrl+Z normally suspends the foreground job; use `fg` in the shell to resume it.
 
 ## Sessions And Preferences
+
+The window opens at 80 columns by 24 rows unless a size is given. The pixel size
+follows the text zoom, so 80x24 at zoom 4 is 1968x1200; resizing or zooming later
+changes the row and column counts.
 
 Each console starts its own PTY when first visited. Background consoles keep
 processing output. Window resizing and zoom changes update every open PTY's
