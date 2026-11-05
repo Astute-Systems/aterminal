@@ -1,0 +1,618 @@
+#include "display.h"
+#include "session.h"
+#include "coriolis/adlib_synth.h"
+#include "softrender/png.h"
+#include <SDL.h>
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <unistd.h>
+
+namespace {
+
+struct Options {
+    std::string shell = std::getenv("SHELL") ? std::getenv("SHELL") : "/bin/sh";
+    std::string command, screenshot;
+    int frames = 0;
+    int width = 1104, height = 768;
+    bool self_test = false, fullscreen = false;
+};
+
+int IntegerFlag(const std::string& value, int minimum, int maximum, const std::string& flag) {
+    int result = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || result < minimum || result > maximum)
+        throw std::runtime_error(flag + " must be an integer from " + std::to_string(minimum) + " to " + std::to_string(maximum));
+    return result;
+}
+
+class Audio {
+public:
+    Audio() {
+        coriolis::AdLibSynth synth(7, 44100);
+        samples_ = synth.Render(coriolis::SoundEffect::kUiMove);
+        samples_.resize(std::min<std::size_t>(samples_.size(), 1102));
+        for (std::size_t index = 0; index < samples_.size(); ++index) {
+            const float fade = std::min(1.0f, static_cast<float>(samples_.size() - index) / 150.0f);
+            samples_[index] = static_cast<std::int16_t>(samples_[index] * 0.16f * fade);
+        }
+    }
+    ~Audio() { if (device_) SDL_CloseAudioDevice(device_); }
+    void Enable(bool enabled) {
+        enabled_ = enabled;
+        if (!enabled) { if (device_) SDL_ClearQueuedAudio(device_); return; }
+        if (device_) return;
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) { SDL_Log("Audio unavailable: %s", SDL_GetError()); return; }
+        SDL_AudioSpec format{};
+        format.freq = 44100;
+        format.format = AUDIO_S16SYS;
+        format.channels = 1;
+        format.samples = 512;
+        device_ = SDL_OpenAudioDevice(nullptr, 0, &format, nullptr, 0);
+        if (!device_) SDL_Log("Audio unavailable: %s", SDL_GetError());
+        else SDL_PauseAudioDevice(device_, 0);
+    }
+    void Click() {
+        if (enabled_ && device_ && SDL_GetQueuedAudioSize(device_) < samples_.size() * sizeof(std::int16_t) * 2)
+            SDL_QueueAudio(device_, samples_.data(), static_cast<Uint32>(samples_.size() * sizeof(std::int16_t)));
+    }
+    bool HasSamples() const {
+        return std::any_of(samples_.begin(), samples_.end(), [](std::int16_t sample) { return sample != 0; });
+    }
+private:
+    SDL_AudioDeviceID device_ = 0;
+    bool enabled_ = false;
+    std::vector<std::int16_t> samples_;
+};
+
+std::string FontPath() {
+    char* base = SDL_GetBasePath();
+    const std::filesystem::path directory = base ? base : ".";
+    SDL_free(base);
+    for (const auto& candidate : {directory / "../share/aterminal/unifont.hex", directory / "assets/unifont.hex",
+                                   std::filesystem::path(ATERMINAL_ASSET_DIR) / "unifont.hex"}) {
+        if (std::filesystem::exists(candidate)) return candidate.string();
+    }
+    throw std::runtime_error("Cannot find assets/unifont.hex");
+}
+
+class Application {
+public:
+    Application(Preferences preferences, Options options, std::string config)
+        : preferences_(preferences), options_(std::move(options)), config_(std::move(config)), display_(FontPath()) {
+        if (options_.shell.empty() || options_.shell[0] != '/') throw std::runtime_error("--shell must be an absolute executable path");
+        window_.reset(SDL_CreateWindow("aterminal", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, options_.width, options_.height,
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0)));
+        if (!window_) throw std::runtime_error(SDL_GetError());
+        SDL_SetWindowMinimumSize(window_.get(), 400, 280);
+        if (options_.self_test) {
+            int width = 0, height = 0;
+            SDL_GetWindowSize(window_.get(), &width, &height);
+            const bool fullscreen = SDL_GetWindowFlags(window_.get()) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+            if (fullscreen != options_.fullscreen || (!fullscreen && (width != options_.width || height != options_.height)))
+                throw std::runtime_error("Startup size or fullscreen flag was not applied");
+        }
+        renderer_.reset(SDL_CreateRenderer(window_.get(), -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC));
+        if (!renderer_) renderer_.reset(SDL_CreateRenderer(window_.get(), -1, SDL_RENDERER_SOFTWARE));
+        if (!renderer_) throw std::runtime_error(SDL_GetError());
+        Resize();
+        Switch(0);
+        audio_.Enable(preferences_.sound);
+        SDL_StartTextInput();
+    }
+
+    int Run() {
+        bool running = true;
+        int frame = 0;
+        const bool original_amber = preferences_.amber, original_sound = preferences_.sound;
+        const int original_scale = preferences_.scale;
+        const bool original_fullscreen = SDL_GetWindowFlags(window_.get()) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+        struct ClipboardRestore {
+            bool enabled;
+            std::string saved;
+            explicit ClipboardRestore(bool restore) : enabled(restore) {
+                if (!enabled) return;
+                char* text = SDL_GetClipboardText();
+                if (text) saved = text;
+                SDL_free(text);
+            }
+            ~ClipboardRestore() { if (enabled) SDL_SetClipboardText(saved.c_str()); }
+        } clipboard_restore(options_.self_test);
+        while (running) {
+            if (options_.self_test) InjectTest(frame);
+            SDL_Event event{};
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) running = false;
+                else if (event.type == SDL_WINDOWEVENT) {
+                    if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) Resize();
+                    dirty_ = true;
+                } else if (event.type == SDL_KEYDOWN) Key(event.key);
+                else if (event.type == SDL_TEXTINPUT && !settings_) {
+                    const std::string text(event.text.text);
+                    if (text == "+") Zoom(1);
+                    else if (text == "-") Zoom(-1);
+                    else {
+                        if (SDL_GetModState() & KMOD_ALT) Current().Send("\033");
+                        Input(text);
+                    }
+                } else if (event.type == SDL_MOUSEWHEEL && !settings_) {
+                    Current().Scroll(event.wheel.y * 3);
+                    ClearSelection(); dirty_ = true;
+                } else if (event.type == SDL_MOUSEBUTTONDOWN) MouseDown(event.button);
+                else if (event.type == SDL_MOUSEMOTION && dragging_) {
+                    const int index = IndexAt(event.motion.x, event.motion.y);
+                    if (index != selection_anchor_ || selection_begin_ >= 0) {
+                        selection_begin_ = selection_anchor_;
+                        selection_end_ = index;
+                    }
+                    dirty_ = true;
+                } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
+                    if (dragging_ && selection_begin_ >= 0) selection_end_ = IndexAt(event.button.x, event.button.y);
+                    dragging_ = false;
+                    dirty_ = true;
+                }
+            }
+            if (options_.self_test) {
+                const bool fullscreen = SDL_GetWindowFlags(window_.get()) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+                if ((frame == 12 && preferences_.scale != original_scale + test_zoom_direction_) ||
+                    (frame == 13 && preferences_.scale != original_scale) ||
+                    (frame == 14 && preferences_.amber == original_amber) ||
+                    (frame == 15 && preferences_.amber != original_amber) ||
+                    (frame == 16 && preferences_.sound == original_sound) ||
+                    (frame == 17 && preferences_.sound != original_sound) ||
+                    ((frame == 19 || frame == 20) && fullscreen == original_fullscreen) ||
+                    (frame == 21 && fullscreen != original_fullscreen))
+                    throw std::runtime_error("SDL shortcut state transition failed");
+                if (frame == 24 && (selection_begin_ != 0 || selection_end_ != 8))
+                    throw std::runtime_error("Mouse drag selection failed");
+                if (frame == 25) {
+                    char* text = SDL_GetClipboardText();
+                    const std::string copied = text ? text : "";
+                    SDL_free(text);
+                    if (copied != "ATERMINAL" || !test_input_.empty() || selection_begin_ >= 0)
+                        throw std::runtime_error("Ctrl+C selection copy failed");
+                }
+                if ((frame == 26 && test_input_ != "ATERMINAL") ||
+                    (frame == 27 && test_input_ != "ATERMINAL\x1a") ||
+                    (frame == 28 && test_input_ != "ATERMINAL\x1a\x19") ||
+                    (frame == 29 && test_input_ != "ATERMINAL\x1a\x19\x03") ||
+                    (frame == 31 && test_input_ != "ATERMINAL\x1a\x19\x03\x03"))
+                    throw std::runtime_error("Clipboard paste or terminal control-key forwarding failed");
+            }
+            for (std::size_t index = 0; index < sessions_.size(); ++index) {
+                if (sessions_[index] && sessions_[index]->Pump() && static_cast<int>(index) == active_) dirty_ = true;
+                if (sessions_[index] && sessions_[index]->terminal.TakeBell() && static_cast<int>(index) == active_) {
+                    flash_until_ = SDL_GetTicks64() + 100; dirty_ = true;
+                }
+            }
+            const bool cursor = (SDL_GetTicks64() / 550) % 2 == 0;
+            if (flash_until_ && SDL_GetTicks64() >= flash_until_) { flash_until_ = 0; dirty_ = true; }
+            if (cursor != last_cursor_) { dirty_ = true; last_cursor_ = cursor; }
+            if (dirty_) {
+                display_.Paint(Current().terminal, Current().Scrollback(), preferences_, cursor || options_.self_test,
+                               selection_begin_, selection_end_);
+                if (settings_) display_.Settings(preferences_);
+                display_.Effects(preferences_);
+                if (SDL_GetTicks64() < flash_until_) {
+                    auto* pixels = display_.image.data();
+                    for (std::size_t index = 0; index < display_.image.size(); ++index) pixels[index] = static_cast<std::uint8_t>(std::min(255, pixels[index] + 24));
+                }
+                SDL_UpdateTexture(texture_.get(), nullptr, display_.image.data(), static_cast<int>(display_.image.width()) * 3);
+                SDL_RenderClear(renderer_.get());
+                SDL_RenderCopy(renderer_.get(), texture_.get(), nullptr, nullptr);
+                SDL_RenderPresent(renderer_.get());
+                UpdateTitle();
+                dirty_ = false;
+            }
+            if (++frame == (options_.self_test ? 40 : options_.frames)) running = false;
+            SDL_Delay(options_.self_test ? 10 : 8);
+        }
+        if (options_.self_test) {
+            const auto count = std::count_if(sessions_.begin(), sessions_.end(), [](const auto& session) { return !!session; });
+            if (count != 12 || preferences_.scale != original_scale || preferences_.amber != original_amber ||
+                preferences_.sound != original_sound || active_ != 0 || !display_.Nonblank() ||
+                !display_.HasGlyph(0x1f600) || !display_.HasGlyph(0x4e16) || !audio_.HasSamples())
+                throw std::runtime_error("SDL interaction, font, rendering or audio-synthesis self-test failed");
+            if (std::string(SDL_GetWindowTitle(window_.get())) != "aterminal / F1")
+                throw std::runtime_error("Simplified window title self-test failed");
+            std::cout << "12 consoles, F-keys, zoom, fullscreen, title, mouse selection, clipboard, Ctrl+C/V/Z/Y, phosphor, mute, Unicode glyphs and AdLib synthesis passed\n";
+        }
+        if (!options_.screenshot.empty() && !softrender::WritePng(display_.image, options_.screenshot))
+            throw std::runtime_error("Could not write screenshot");
+        if (!options_.self_test) Save();
+        SDL_StopTextInput();
+        return 0;
+    }
+
+private:
+    struct WindowDeleter { void operator()(SDL_Window* value) const { SDL_DestroyWindow(value); } };
+    struct RendererDeleter { void operator()(SDL_Renderer* value) const { SDL_DestroyRenderer(value); } };
+    struct TextureDeleter { void operator()(SDL_Texture* value) const { SDL_DestroyTexture(value); } };
+    Preferences preferences_;
+    Options options_;
+    std::string config_;
+    Display display_;
+    std::unique_ptr<SDL_Window, WindowDeleter> window_;
+    std::unique_ptr<SDL_Renderer, RendererDeleter> renderer_;
+    std::unique_ptr<SDL_Texture, TextureDeleter> texture_;
+    std::array<std::unique_ptr<Session>, 12> sessions_;
+    Audio audio_;
+    int active_ = 0, selection_begin_ = -1, selection_end_ = -1, selection_anchor_ = -1;
+    bool dirty_ = true, settings_ = false, dragging_ = false, last_cursor_ = false;
+    Uint64 flash_until_ = 0;
+    std::string test_input_;
+    int test_zoom_direction_ = 1;
+    Session& Current() { return *sessions_[active_]; }
+
+    void ClearSelection() { selection_begin_ = selection_end_ = selection_anchor_ = -1; dragging_ = false; }
+
+    void Resize() {
+        int width = 0, height = 0;
+        SDL_GetRendererOutputSize(renderer_.get(), &width, &height);
+        display_.Resize(width, height);
+        texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_RGB24, SDL_TEXTUREACCESS_STREAMING,
+                                        display_.image.width(), display_.image.height()));
+        if (!texture_) throw std::runtime_error(SDL_GetError());
+        for (auto& session : sessions_)
+            if (session) session->Resize(display_.Rows(preferences_), display_.Columns(preferences_));
+        SDL_Rect rect{Display::Margin, Display::Margin, display_.CellWidth(preferences_), display_.CellHeight(preferences_)};
+        SDL_SetTextInputRect(&rect);
+        ClearSelection(); dirty_ = true;
+    }
+
+    void Switch(int index) {
+        if (!sessions_[index]) sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, options_.command);
+        active_ = index;
+        settings_ = false; ClearSelection(); dirty_ = true;
+        UpdateTitle();
+    }
+
+    void UpdateTitle() {
+        const std::string title = "aterminal / F" + std::to_string(active_ + 1);
+        SDL_SetWindowTitle(window_.get(), title.c_str());
+    }
+
+    void ToggleFullscreen() {
+        const bool fullscreen = SDL_GetWindowFlags(window_.get()) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+        if (SDL_SetWindowFullscreen(window_.get(), fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
+            SDL_Log("Could not toggle fullscreen: %s", SDL_GetError());
+        Resize();
+    }
+
+    void Zoom(int direction) {
+        preferences_.scale = std::clamp(preferences_.scale + direction, 1, 5);
+        Resize();
+    }
+
+    void Input(std::string_view text) {
+        if (options_.self_test) test_input_.append(text);
+        Current().Follow(); ClearSelection();
+        Current().Send(text); dirty_ = true;
+    }
+
+    void Paste() {
+        char* text = SDL_GetClipboardText();
+        if (!text) return;
+        std::string clean;
+        for (const char* byte = text; *byte && clean.size() < 1024 * 1024; ++byte) {
+            if (*byte == '\n') clean += '\r';
+            else if (static_cast<unsigned char>(*byte) >= 32 || *byte == '\t') clean += *byte;
+        }
+        SDL_free(text);
+        if (Current().terminal.BracketedPaste()) clean = "\033[200~" + clean + "\033[201~";
+        Input(clean);
+    }
+
+    void Copy() {
+        if (selection_begin_ < 0) return;
+        int begin = std::min(selection_begin_, selection_end_), end = std::max(selection_begin_, selection_end_);
+        std::string result, line;
+        const auto& terminal = Current().terminal;
+        const int history = static_cast<int>(terminal.History().size());
+        for (int index = begin; index <= end; ++index) {
+            const int row = index / terminal.Columns(), col = index % terminal.Columns();
+            const int source = history - std::min(Current().Scrollback(), history) + row;
+            if (source < history) {
+                const auto& cells = terminal.History()[source];
+                if (col < static_cast<int>(cells.size())) line += Terminal::Utf8(cells[col].text);
+            } else line += Terminal::Utf8(terminal.At(source - history, col).text);
+            if (col == terminal.Columns() - 1 || index == end) {
+                while (!line.empty() && line.back() == ' ') line.pop_back();
+                result += line; line.clear();
+                if (index != end) result += '\n';
+            }
+        }
+        if (SDL_SetClipboardText(result.c_str()) == 0) ClearSelection();
+        dirty_ = true;
+    }
+
+    int IndexAt(int mouse_x, int mouse_y) {
+        int width = 0, height = 0;
+        SDL_GetWindowSize(window_.get(), &width, &height);
+        const int pixel_x = mouse_x * static_cast<int>(display_.image.width()) / std::max(width, 1);
+        const int pixel_y = mouse_y * static_cast<int>(display_.image.height()) / std::max(height, 1);
+        const int col = std::clamp((pixel_x - Display::Margin) / display_.CellWidth(preferences_), 0, Current().terminal.Columns() - 1);
+        const int row = std::clamp((pixel_y - Display::Margin) / display_.CellHeight(preferences_), 0, Current().terminal.Rows() - 1);
+        return row * Current().terminal.Columns() + col;
+    }
+
+    void MouseDown(const SDL_MouseButtonEvent& event) {
+        if (event.button == SDL_BUTTON_RIGHT) { settings_ = !settings_; dirty_ = true; return; }
+        if (settings_) {
+            int width = 0, height = 0;
+            SDL_GetWindowSize(window_.get(), &width, &height);
+            const int px = event.x * static_cast<int>(display_.image.width()) / std::max(width, 1);
+            const int py = event.y * static_cast<int>(display_.image.height()) / std::max(height, 1);
+            const int left = std::max(8, (static_cast<int>(display_.image.width()) - 336) / 2);
+            const int top = std::max(8, (static_cast<int>(display_.image.height()) - 264) / 2);
+            if (px < left || px > left + 336 || py < top || py > top + 264) settings_ = false;
+            else if (py >= top + 60 && py < top + 260) {
+                const int row = (py - top - 60) / 40;
+                if (row == 0) preferences_.amber = false;
+                else if (row == 1) preferences_.amber = true;
+                else if (row == 2) { preferences_.sound = !preferences_.sound; audio_.Enable(preferences_.sound); }
+                else if (row == 3) preferences_.crt = !preferences_.crt;
+                else if (row == 4) preferences_.bitmap = !preferences_.bitmap;
+            }
+            dirty_ = true; return;
+        }
+        if (event.button == SDL_BUTTON_MIDDLE) Paste();
+        else if (event.button == SDL_BUTTON_LEFT) {
+            ClearSelection();
+            selection_anchor_ = IndexAt(event.x, event.y);
+            dragging_ = true; dirty_ = true;
+        }
+    }
+
+    void Key(const SDL_KeyboardEvent& event) {
+        const SDL_Keycode key = event.keysym.sym;
+        const bool control = event.keysym.mod & KMOD_CTRL, shift = event.keysym.mod & KMOD_SHIFT;
+        if ((event.keysym.mod & KMOD_ALT) && (key == SDLK_RETURN || key == SDLK_KP_ENTER)) {
+            if (!event.repeat) ToggleFullscreen();
+            return;
+        }
+        if (key >= SDLK_F1 && key <= SDLK_F12) { Switch(static_cast<int>(key - SDLK_F1)); audio_.Click(); return; }
+        if (control && shift) {
+            if (key == SDLK_a) preferences_.amber = true;
+            else if (key == SDLK_g) preferences_.amber = false;
+            else if (key == SDLK_s) { preferences_.sound = !preferences_.sound; audio_.Enable(preferences_.sound); }
+            else if (key == SDLK_r) preferences_.crt = !preferences_.crt;
+            else if (key == SDLK_b) preferences_.bitmap = !preferences_.bitmap;
+            else if (key == SDLK_p) settings_ = !settings_;
+            else if (key == SDLK_c) Copy();
+            else if (key == SDLK_v) Paste();
+            else if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS) Input("+");
+            else if (key == SDLK_MINUS || key == SDLK_KP_MINUS) Input("-");
+            else if (key == SDLK_f) {
+                if (!event.repeat) ToggleFullscreen();
+            } else if (key == SDLK_RETURN && !Current().Running()) {
+                sessions_[active_].reset(); Switch(active_);
+            } else return;
+            dirty_ = true; return;
+        }
+        if (settings_) { if (key == SDLK_ESCAPE) { settings_ = false; dirty_ = true; } return; }
+        audio_.Click();
+        if (control && !(event.keysym.mod & KMOD_ALT)) {
+            if (key == SDLK_c && selection_begin_ >= 0) { Copy(); return; }
+            if (key == SDLK_v) { Paste(); return; }
+        }
+        if (shift && (key == SDLK_PAGEUP || key == SDLK_PAGEDOWN)) {
+            Current().Scroll((key == SDLK_PAGEUP ? 1 : -1) * (Current().terminal.Rows() - 1));
+            ClearSelection(); dirty_ = true; return;
+        }
+        if (shift && key == SDLK_INSERT) { Paste(); return; }
+        if (control && key >= SDLK_a && key <= SDLK_z) {
+            Input(std::string(1, static_cast<char>(key - SDLK_a + 1))); return;
+        }
+        if (control && key == SDLK_SPACE) { Input(std::string(1, '\0')); return; }
+        if (control && key == SDLK_LEFTBRACKET) { Input("\033"); return; }
+        if (control && key == SDLK_BACKSLASH) { Input(std::string(1, '\x1c')); return; }
+        if (control && key == SDLK_RIGHTBRACKET) { Input(std::string(1, '\x1d')); return; }
+        const char* sequence = nullptr;
+        char arrow = 0;
+        if (key == SDLK_UP) arrow = 'A';
+        else if (key == SDLK_DOWN) arrow = 'B';
+        else if (key == SDLK_RIGHT) arrow = 'C';
+        else if (key == SDLK_LEFT) arrow = 'D';
+        else if (key == SDLK_HOME) arrow = 'H';
+        else if (key == SDLK_END) arrow = 'F';
+        if (arrow) {
+            const int modifier = 1 + (shift ? 1 : 0) + ((event.keysym.mod & KMOD_ALT) ? 2 : 0) + (control ? 4 : 0);
+            std::string bytes = modifier > 1 ? "\033[1;" + std::to_string(modifier) :
+                (Current().terminal.ApplicationCursor() ? "\033O" : "\033[");
+            Input(bytes + arrow); return;
+        }
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) sequence = "\r";
+        else if (key == SDLK_BACKSPACE) sequence = "\x7f";
+        else if (key == SDLK_TAB) sequence = shift ? "\033[Z" : "\t";
+        else if (key == SDLK_ESCAPE) sequence = "\033";
+        else if (key == SDLK_INSERT) sequence = "\033[2~";
+        else if (key == SDLK_DELETE) sequence = "\033[3~";
+        else if (key == SDLK_PAGEUP) sequence = "\033[5~";
+        else if (key == SDLK_PAGEDOWN) sequence = "\033[6~";
+        if (sequence) Input(sequence);
+    }
+
+    void InjectTest(int frame) {
+        SDL_Event event{};
+        event.type = SDL_KEYDOWN;
+        if (frame < 12) event.key.keysym.sym = SDLK_F1 + frame;
+        else if (frame == 12 || frame == 13) {
+            event.type = SDL_TEXTINPUT;
+            if (frame == 12) test_zoom_direction_ = preferences_.scale == 5 ? -1 : 1;
+            const int direction = frame == 12 ? test_zoom_direction_ : -test_zoom_direction_;
+            event.text.text[0] = direction > 0 ? '+' : '-';
+        } else if (frame >= 14 && frame <= 17) {
+            event.key.keysym.mod = KMOD_CTRL | KMOD_SHIFT;
+            event.key.keysym.sym = frame < 16 ? (preferences_.amber ? SDLK_g : SDLK_a) : SDLK_s;
+        } else if (frame == 18) event.key.keysym.sym = SDLK_F1;
+        else if (frame >= 19 && frame <= 21) {
+            event.key.keysym.mod = KMOD_ALT;
+            event.key.keysym.sym = frame == 21 ? SDLK_KP_ENTER : SDLK_RETURN;
+            event.key.repeat = frame == 20 ? 1 : 0;
+        }
+        else if (frame >= 22 && frame <= 24) {
+            int width = 0, height = 0;
+            SDL_GetWindowSize(window_.get(), &width, &height);
+            const int column = frame == 22 ? 0 : 8;
+            const int mouse_x = (Display::Margin + column * display_.CellWidth(preferences_) + display_.CellWidth(preferences_) / 2) * width / display_.image.width();
+            const int mouse_y = (Display::Margin + display_.CellHeight(preferences_) / 2) * height / display_.image.height();
+            if (frame == 22) {
+                test_input_.clear();
+                Current().terminal.Feed("\0337\033[HATERMINAL\0338");
+                SDL_SetClipboardText("previous clipboard");
+            }
+            if (frame == 23) {
+                event.type = SDL_MOUSEMOTION;
+                event.motion.x = mouse_x; event.motion.y = mouse_y;
+                event.motion.state = SDL_BUTTON_LMASK;
+            } else {
+                event.type = frame == 22 ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+                event.button.button = SDL_BUTTON_LEFT;
+                event.button.x = mouse_x; event.button.y = mouse_y;
+            }
+        }
+        else if ((frame >= 25 && frame <= 29) || frame == 31) {
+            event.key.keysym.mod = KMOD_CTRL;
+            event.key.keysym.sym = frame == 26 ? SDLK_v : frame == 27 ? SDLK_z : frame == 28 ? SDLK_y : SDLK_c;
+        }
+        else if (frame == 30) {
+            event.type = SDL_MOUSEBUTTONDOWN;
+            event.button.button = SDL_BUTTON_LEFT;
+            event.button.x = event.button.y = 30;
+            SDL_PushEvent(&event);
+            event.type = SDL_MOUSEBUTTONUP;
+        }
+        else return;
+        SDL_PushEvent(&event);
+    }
+
+    void Save() {
+        if (config_.empty()) return;
+        const std::string temporary = config_ + "." + std::to_string(getpid()) + ".tmp";
+        std::ofstream file(temporary);
+        file << preferences_.amber << ' ' << preferences_.sound << ' ' << preferences_.crt << ' '
+             << preferences_.bitmap << ' ' << preferences_.scale << '\n';
+        file.close();
+        if (file) {
+            std::error_code error;
+            std::filesystem::rename(temporary, config_, error);
+            if (error) SDL_Log("Could not save preferences: %s", error.message().c_str());
+        }
+    }
+};
+
+const char* DemoCommand() {
+    return "printf '\033[2J\033[H\033[1mATERMINAL  /  PHOSPHOR WORKSTATION\033[0m\r\n\r\n"
+           "  UNIX SESSION                         VT100 / UTF-8\r\n"
+           "  --------------------------------------------------\r\n\r\n"
+           "  The quick brown fox jumps over the lazy dog.\r\n"
+           "  ABCDEFGHIJKLMNOPQRSTUVWXYZ  0123456789\r\n"
+           "  \033[1mBold Mixed Case\033[0m  \033[3mItalic Mixed Case\033[0m  \033[1;3mBoth\033[0m\r\n"
+           "  !@#$%%^&*()_+-=[]{};:\"<>/? \\ |\r\n\r\n"
+           "  Unicode   caf\303\251  \316\273  \342\206\222  \344\270\226\347\225\214\r\n"
+           "  Emoji     \360\237\230\200  \360\237\232\200  \360\237\222\273  \342\231\245\r\n\r\n"
+           "\033(0  lqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqk\r\n"
+           "  x                                x\r\n"
+           "  mqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqj\033(B\r\n\r\n'; exec /bin/sh -i";
+}
+}
+
+int main(int argc, char** argv) {
+    try {
+        Preferences preferences;
+        Options options;
+        char* directory = SDL_GetPrefPath("ross-newman", "aterminal");
+        const std::string config = directory ? std::string(directory) + "preferences" : "";
+        SDL_free(directory);
+        bool testing = false;
+        for (int index = 1; index < argc; ++index) if (std::string(argv[index]) == "--self-test") testing = true;
+        if (!testing) {
+            std::ifstream file(config);
+            file >> preferences.amber >> preferences.sound >> preferences.crt >> preferences.bitmap >> preferences.scale;
+        }
+        preferences.scale = std::clamp(preferences.scale, 1, 5);
+        for (int index = 1; index < argc; ++index) {
+            const std::string raw(argv[index]);
+            const auto equal = raw.find('=');
+            const bool inline_value = equal != std::string::npos;
+            const std::string argument = raw.substr(0, equal);
+            const bool takes_value = argument == "--size" || argument == "--width" || argument == "--height" ||
+                argument == "--text-size" || argument == "--colour" || argument == "--color" ||
+                argument == "--shell" || argument == "--command" || argument == "-e" ||
+                argument == "--screenshot" || argument == "--frames";
+            if (inline_value && !takes_value && argument != "--fullscreen")
+                throw std::runtime_error(argument + " does not accept a value");
+            const auto value = [&]() -> std::string {
+                if (inline_value) return raw.substr(equal + 1);
+                if (index + 1 >= argc) throw std::runtime_error("Missing value for " + argument);
+                return argv[++index];
+            };
+            if (argument == "--amber") preferences.amber = true;
+            else if (argument == "--green") preferences.amber = false;
+            else if (argument == "--no-sound") preferences.sound = false;
+            else if (argument == "--sound") preferences.sound = true;
+            else if (argument == "--no-crt") preferences.crt = false;
+            else if (argument == "--bitmap") preferences.bitmap = true;
+            else if (argument == "--fullscreen") {
+                const std::string enabled = inline_value ? value() : "true";
+                if (enabled != "true" && enabled != "false" && enabled != "1" && enabled != "0")
+                    throw std::runtime_error("--fullscreen must be true or false");
+                options.fullscreen = enabled == "true" || enabled == "1";
+            }
+            else if (argument == "--windowed") options.fullscreen = false;
+            else if (argument == "--size") {
+                const std::string dimensions = value();
+                const auto separator = dimensions.find_first_of("xX");
+                if (separator == std::string::npos) throw std::runtime_error("--size must be WIDTHxHEIGHT in pixels");
+                options.width = IntegerFlag(dimensions.substr(0, separator), 400, 4096, "--size width");
+                options.height = IntegerFlag(dimensions.substr(separator + 1), 280, 2160, "--size height");
+            }
+            else if (argument == "--width") options.width = IntegerFlag(value(), 400, 4096, argument);
+            else if (argument == "--height") options.height = IntegerFlag(value(), 280, 2160, argument);
+            else if (argument == "--text-size") preferences.scale = IntegerFlag(value(), 1, 5, argument);
+            else if (argument == "--colour" || argument == "--color") {
+                const std::string colour = value();
+                if (colour != "green" && colour != "amber") throw std::runtime_error(argument + " must be green or amber");
+                preferences.amber = colour == "amber";
+            }
+            else if (argument == "--shell") options.shell = value();
+            else if (argument == "--command" || argument == "-e") options.command = value();
+            else if (argument == "--screenshot") options.screenshot = value();
+            else if (argument == "--frames") options.frames = IntegerFlag(value(), 1, 1000000, argument);
+            else if (argument == "--demo") options.command = DemoCommand();
+            else if (argument == "--self-test") { options.self_test = true; options.command = DemoCommand(); }
+            else if (argument == "--help" || argument == "-h") {
+                std::cout << "aterminal [--green|--amber] [--no-sound|--sound] [--no-crt] [--bitmap]\n"
+                    "          [--size WIDTHxHEIGHT] [--width N --height N] [--text-size 1..5]\n"
+                    "          [--colour green|amber] [--fullscreen[=true|false]|--windowed]\n"
+                    "          [--shell /path/to/shell] [-e 'command'] [--demo]\n"
+                    "          [-h|--help]\n"
+                    "Value flags accept --flag=value or --flag value; --color aliases --colour.\n"
+                    "F1-F12: consoles; +/-: zoom; Ctrl+Shift+Plus/Minus: literal signs\n"
+                    "Alt+Enter: fullscreen; Ctrl+Shift+F: fullscreen (alternative)\n"
+                    "Ctrl+Shift+A/G: amber/green; S: sound; R: CRT; B: bitmap\n"
+                    "Ctrl+C: copy selection, otherwise interrupt; Ctrl+V: paste\n"
+                    "Ctrl+Z/Y: forwarded to shell/app (usually suspend/yank in shells)\n"
+                    "Ctrl+Shift+P or right click: setup; C/V: copy/paste; Enter: restart exited shell\n"
+                    "Shift+PageUp/PageDown or wheel: scrollback; drag: selection\n";
+                SDL_Quit(); return 0;
+            } else throw std::runtime_error("Unknown option: " + argument);
+        }
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) throw std::runtime_error(SDL_GetError());
+        int result = 0;
+        { Application application(preferences, options, options.self_test ? "" : config); result = application.Run(); }
+        SDL_Quit();
+        return result;
+    } catch (const std::exception& error) {
+        std::cerr << "aterminal: " << error.what() << '\n';
+        SDL_Quit(); return 1;
+    }
+}
