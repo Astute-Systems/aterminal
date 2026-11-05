@@ -1,4 +1,9 @@
 # aterminal
+![Badge for version](https://img.shields.io/badge/Version-PLACEHOLDER-blue)
+
+A native Linux terminal with the look of a phosphor CRT: green or amber text,
+soft bloom, scanlines, a vignette, and optional AdLib-style key sounds. Written
+in C++17 with SDL2 as its only external library dependency.
 
 A native Linux terminal with the look of a phosphor CRT: green or amber text,
 soft bloom, scanlines, a vignette, and optional AdLib-style key sounds. Written
@@ -11,7 +16,15 @@ aterminal implements a practical VT100/ANSI subset with Unicode extensions, not
 complete xterm compatibility. Read [Compatibility](#compatibility) before using
 it with applications that depend on advanced terminal features.
 
-## Screenshots
+## Versioning
+
+The project version is managed by the `VERSION` file in the repository root.
+To update the version:
+1. Update the `VERSION` file (e.g., from `0.1.0` to `0.2.0`).
+2. Update the badge URL in `README.md` to reflect the new version.
+3. Commit the changes.
+
+The version number used in the badge and title should always match the content of the `VERSION` file.
 
 ### Green Phosphor
 
