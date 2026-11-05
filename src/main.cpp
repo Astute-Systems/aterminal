@@ -378,7 +378,13 @@ private:
     }
 
     void Input(std::string_view text) {
-        if (options_.self_test) test_input_.append(text);
+        if (options_.self_test) {
+            // A shell may turn on bracketed paste; the checks compare the text itself.
+            std::string input(text);
+            for (const char* marker : {"\033[200~", "\033[201~"})
+                for (auto at = input.find(marker); at != std::string::npos; at = input.find(marker)) input.erase(at, 6);
+            test_input_ += input;
+        }
         Current().Follow(); ClearSelection();
         Current().Send(text); dirty_ = true;
     }

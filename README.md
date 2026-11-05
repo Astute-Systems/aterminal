@@ -105,11 +105,13 @@ Install the build prerequisites for your distribution:
 
 ```sh
 sudo apt install build-essential cmake libsdl2-dev        # Debian, Ubuntu
-sudo dnf install gcc-c++ cmake make SDL2-devel            # AlmaLinux, needs CRB
+sudo dnf install gcc-c++ cmake make SDL2-devel            # AlmaLinux 9, needs CRB
 sudo pacman -S --needed base-devel cmake sdl2-compat      # Arch Linux
 ```
 
-On AlmaLinux, enable CRB first with `sudo dnf config-manager --set-enabled crb`.
+On AlmaLinux 9, enable CRB first with `sudo dnf config-manager --set-enabled crb`.
+AlmaLinux 10 has no `SDL2-devel`; install `sdl2-compat-devel` from its `devel`
+repository, as [the CI workflow](.github/workflows/build.yml) does.
 
 ## Build And Run
 
@@ -179,9 +181,10 @@ out the library dependencies.
 
 ### Releases
 
-Every push builds and tests on Ubuntu 24.04, AlmaLinux 9 and 10, and Arch Linux.
+Every push builds and tests on Ubuntu 22.04, 24.04 and 26.04, AlmaLinux 9 and 10,
+and Arch Linux.
 Pushing a tag such as `v0.1.0` also publishes a GitHub release with the `.deb`,
-`.rpm` and Arch packages and a `SHA256SUMS` file. The tag must match the `VERSION`
+`.rpm` and Arch packages for each, and a `SHA256SUMS` file. The tag must match the `VERSION`
 file.
 
 Installation includes the executable, a desktop menu entry and icon, a man page, Unicode font data, documentation,

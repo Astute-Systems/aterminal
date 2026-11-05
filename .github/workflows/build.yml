@@ -12,10 +12,20 @@ permissions:
 jobs:
   ubuntu:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['22.04', '24.04', '26.04']
+    container: ubuntu:${{ matrix.version }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
-      - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libsdl2-dev dpkg-dev
+        run: |
+          apt-get update
+          apt-get install -y build-essential cmake dpkg-dev file git libsdl2-dev
+      - uses: actions/checkout@v7
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -23,15 +33,20 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
       - name: Package
-        run: cd build && cpack -G DEB
-      - uses: actions/upload-artifact@v4
+        run: |
+          cd build
+          cpack -G DEB
+          # Each release needs its own name, as the libraries differ between them.
+          for package in *.deb; do mv "$package" "${package%.deb}_ubuntu-${{ matrix.version }}.deb"; done
+      - uses: actions/upload-artifact@v7
         with:
-          name: ubuntu-24.04
+          name: ubuntu-${{ matrix.version }}
           path: build/*.deb
           if-no-files-found: error
 
   almalinux:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -42,8 +57,16 @@ jobs:
         run: |
           dnf install -y dnf-plugins-core epel-release
           dnf config-manager --set-enabled crb
-          dnf install -y gcc-c++ cmake make rpm-build git SDL2-devel
-      - uses: actions/checkout@v4
+          dnf install -y gcc-c++ cmake make rpm-build git
+          if [ "${{ matrix.version }}" = 9 ]; then
+              dnf install -y SDL2-devel
+          else
+              # AlmaLinux 10 keeps the SDL2 headers in its separate devel repository.
+              dnf install -y --repofrompath=alma-devel,https://repo.almalinux.org/almalinux/10/devel/x86_64/os/ \
+                  --setopt=alma-devel.gpgcheck=1 --setopt=alma-devel.gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-10 \
+                  sdl2-compat-devel
+          fi
+      - uses: actions/checkout@v7
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -52,7 +75,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
       - name: Package
         run: cd build && cpack -G RPM
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: almalinux-${{ matrix.version }}
           path: build/*.rpm
@@ -60,18 +83,19 @@ jobs:
 
   arch:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container: archlinux:base-devel
     steps:
       - name: Install dependencies
         run: pacman -Syu --noconfirm --needed git cmake sdl2-compat
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build, test and package
         run: |
           # makepkg refuses to run as root.
           useradd --create-home builder
           chown -R builder .
           su builder -c 'cd packaging/arch && makepkg --noconfirm'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arch
           path: packaging/arch/*.pkg.tar.zst
@@ -84,14 +108,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check the tag matches VERSION
         run: |
           if [ "${GITHUB_REF_NAME#v}" != "$(cat VERSION)" ]; then
               echo "Tag $GITHUB_REF_NAME does not match VERSION $(cat VERSION)" >&2
               exit 1
           fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
