@@ -5,7 +5,12 @@
 
 Terminal::Terminal(int rows, int columns)
     : rows_(std::clamp(rows, 1, 500)), columns_(std::clamp(columns, 2, 500)),
-      bottom_(rows_ - 1), cells_(rows_ * columns_) {}
+      bottom_(rows_ - 1), cells_(rows_ * columns_) { DefaultTabs(0); }
+
+void Terminal::DefaultTabs(int from) {
+    tabs_.resize(columns_);
+    for (int column = from; column < columns_; ++column) tabs_[column] = column % 8 == 0;
+}
 
 const Cell& Terminal::At(int row, int column) const {
     return cells_[std::clamp(row, 0, rows_ - 1) * columns_ + std::clamp(column, 0, columns_ - 1)];
@@ -62,7 +67,8 @@ void Terminal::RepairLine(int row) {
 }
 
 void Terminal::Put(char32_t point) {
-    if (dec_graphics_ && point >= U'_' && point <= U'~') {
+    if (Width(point) > 0) repeat_ = point;
+    if ((shift_out_ ? g1_graphics_ : dec_graphics_) && point >= U'_' && point <= U'~') {
         static constexpr char32_t graphics[] = U" \u25c6\u2592\u2409\u240c\u240d\u240a\u00b0\u00b1\u2424\u240b\u2518\u2510\u250c\u2514\u253c\u23ba\u23bb\u2500\u23bc\u23bd\u251c\u2524\u2534\u252c\u2502\u2264\u2265\u03c0\u2260\u00a3\u00b7";
         point = graphics[point - U'_'];
     }
@@ -133,35 +139,63 @@ void Terminal::Erase(int begin, int end) {
     }
 }
 
-void Terminal::Save() { saved_row_ = row_; saved_column_ = column_; saved_pen_ = pen_; }
+void Terminal::Save() {
+    saved_row_ = row_; saved_column_ = column_; saved_pen_ = pen_;
+    saved_origin_ = origin_; saved_wrap_ = wrap_;
+    saved_graphics_ = dec_graphics_; saved_g1_graphics_ = g1_graphics_; saved_shift_out_ = shift_out_;
+}
 void Terminal::Restore() {
     row_ = std::clamp(saved_row_, 0, rows_ - 1);
     column_ = std::clamp(saved_column_, 0, columns_ - 1);
     pen_ = saved_pen_;
+    origin_ = saved_origin_; wrap_ = saved_wrap_;
+    dec_graphics_ = saved_graphics_; g1_graphics_ = saved_g1_graphics_; shift_out_ = saved_shift_out_;
     pending_wrap_ = false;
 }
 
-void Terminal::Reset() {
-    pen_ = Cell{};
-    cells_.assign(rows_ * columns_, Cell{});
-    row_ = column_ = top_ = 0;
+void Terminal::SoftReset() {
+    pen_ = saved_pen_ = Cell{};
+    saved_row_ = saved_column_ = top_ = 0;
+    saved_origin_ = saved_graphics_ = saved_g1_graphics_ = saved_shift_out_ = false;
+    saved_wrap_ = true;
     bottom_ = rows_ - 1;
-    origin_ = insert_ = dec_graphics_ = pending_wrap_ = false;
+    origin_ = insert_ = dec_graphics_ = g1_graphics_ = shift_out_ = pending_wrap_ = false;
+    repeat_ = 0;
     wrap_ = cursor_visible_ = true;
-    application_cursor_ = bracketed_paste_ = false;
+    application_cursor_ = false;
+}
+
+void Terminal::Reset() {
+    SoftReset();
+    cells_.assign(rows_ * columns_, Cell{});
+    row_ = column_ = 0;
+    bracketed_paste_ = false;
+    DefaultTabs(0);
 }
 
 void Terminal::Control(unsigned char byte) {
     if (byte == '\r') { column_ = 0; pending_wrap_ = false; }
     else if (byte == '\n' || byte == '\v' || byte == '\f') Linefeed();
     else if (byte == '\b') { column_ = std::max(0, column_ - 1); pending_wrap_ = false; }
-    else if (byte == '\t') { column_ = std::min(columns_ - 1, (column_ / 8 + 1) * 8); pending_wrap_ = false; }
+    else if (byte == '\t') {
+        do ++column_; while (column_ < columns_ - 1 && !tabs_[column_]);
+        column_ = std::min(column_, columns_ - 1);
+        pending_wrap_ = false;
+    }
     else if (byte == 7) bell_ = true;
-    else if (byte == 0x0f) dec_graphics_ = false;
+    else if (byte == 0x0e) shift_out_ = true;
+    else if (byte == 0x0f) shift_out_ = false;
 }
 
 void Terminal::Csi(char final) {
     bool private_mode = !sequence_.empty() && sequence_[0] == '?';
+    // Sequences that share a final byte with a simpler one, such as ESC[>4;2m
+    // (not SGR) and ESC[1 @ (not ICH), must not fall through to it.
+    const char prefix = sequence_.empty() ? '\0' : sequence_[0];
+    const bool intermediate = sequence_.find_first_of(" !\"#$%&'()*+,-./") != std::string::npos;
+    if (final == 'p' && sequence_ == "!") { SoftReset(); return; }
+    if (final == 'c' && prefix == '>') { reply_ += "\033[>0;0;0c"; return; }
+    if (intermediate || prefix == '>' || prefix == '=' || prefix == '<') return;
     std::vector<int> args(1, 0);
     for (unsigned char byte : sequence_) {
         if (byte >= '0' && byte <= '9') args.back() = std::min(100000, args.back() * 10 + byte - '0');
@@ -173,16 +207,32 @@ void Terminal::Csi(char final) {
     const int count = std::min(arg(0), std::max(rows_, columns_));
     const int first = origin_ ? top_ : 0;
     const int last = origin_ ? bottom_ : rows_ - 1;
-    if (final != 'm') pending_wrap_ = false;
+    // Relative moves stop at a margin when they start inside it, in either origin mode.
+    const int above = row_ >= top_ ? top_ : 0;
+    const int below = row_ <= bottom_ ? bottom_ : rows_ - 1;
+    if (final != 'm' && final != 'b') pending_wrap_ = false;
     switch (final) {
-    case 'A': row_ = std::max(first, row_ - count); break;
-    case 'B': case 'e': row_ = std::min(last, row_ + count); break;
+    case 'A': row_ = std::max(above, row_ - count); break;
+    case 'B': case 'e': row_ = std::min(below, row_ + count); break;
     case 'C': case 'a': column_ = std::min(columns_ - 1, column_ + count); break;
     case 'D': column_ = std::max(0, column_ - count); break;
-    case 'E': row_ = std::min(last, row_ + count); column_ = 0; break;
-    case 'F': row_ = std::max(first, row_ - count); column_ = 0; break;
+    case 'E': row_ = std::min(below, row_ + count); column_ = 0; break;
+    case 'F': row_ = std::max(above, row_ - count); column_ = 0; break;
     case 'G': case '`': column_ = std::clamp(arg(0) - 1, 0, columns_ - 1); break;
     case 'd': row_ = std::clamp(first + arg(0) - 1, first, last); break;
+    case 'b':
+        if (repeat_) for (int repeat = 0; repeat < count; ++repeat) Put(repeat_);
+        break;
+    case 'Z':
+        for (int tab = 0; tab < count; ++tab) {
+            if (column_ > 0) --column_;
+            while (column_ > 0 && !tabs_[column_]) --column_;
+        }
+        break;
+    case 'g':
+        if (args[0] == 0) tabs_[column_] = false;
+        else if (args[0] == 3) tabs_.assign(columns_, false);
+        break;
     case 'H': case 'f':
         row_ = std::clamp(first + arg(0) - 1, first, last);
         column_ = std::clamp(arg(1) - 1, 0, columns_ - 1); break;
@@ -262,12 +312,13 @@ void Terminal::Csi(char final) {
             const int value = args[index];
             if (value == 0) pen_ = Cell{};
             else if (value == 1) pen_.bold = true;
+            else if (value == 2) pen_.dim = true;
             else if (value == 3) pen_.italic = true;
             else if (value == 4) pen_.underline = true;
             else if (value == 7) pen_.inverse = true;
             else if (value == 8) pen_.conceal = true;
             else if (value == 9) pen_.strike = true;
-            else if (value == 22) pen_.bold = false;
+            else if (value == 22) pen_.bold = pen_.dim = false;
             else if (value == 23) pen_.italic = false;
             else if (value == 24) pen_.underline = false;
             else if (value == 27) pen_.inverse = false;
@@ -311,12 +362,20 @@ void Terminal::Feed(std::string_view bytes) {
         }
         if (byte == 27) { parse_ = Parse::Escape; utf_remaining_ = 0; continue; }
         if (byte < 32) { Control(byte); continue; }
-        if (parse_ == Parse::Charset) { dec_graphics_ = byte == '0'; parse_ = Parse::Ground; continue; }
+        if (parse_ == Parse::Charset) {
+            if (charset_slot_ == 0) dec_graphics_ = byte == '0';
+            else if (charset_slot_ == 1) g1_graphics_ = byte == '0';
+            parse_ = Parse::Ground;
+            continue;
+        }
         if (parse_ == Parse::Escape) {
             parse_ = Parse::Ground;
             if (byte == '[') { parse_ = Parse::Csi; sequence_.clear(); }
             else if (byte == ']') { parse_ = Parse::Osc; sequence_.clear(); }
-            else if (byte == '(' || byte == ')') parse_ = Parse::Charset;
+            else if (byte == '(' || byte == ')') { charset_slot_ = byte == ')'; parse_ = Parse::Charset; }
+            else if (byte == '*' || byte == '+' || byte == '-' || byte == '.' || byte == '/' ||
+                     byte == '#' || byte == '%' || byte == ' ') { charset_slot_ = 2; parse_ = Parse::Charset; }
+            else if (byte == 'H') tabs_[column_] = true;
             else if (byte == 'P' || byte == '^' || byte == '_') parse_ = Parse::Ignore;
             else if (byte == '7') Save();
             else if (byte == '8') Restore();
@@ -362,7 +421,9 @@ void Terminal::Resize(int rows, int columns) {
         grid = std::move(next);
     };
     resize(cells_); resize(main_cells_);
+    const int previous_columns = columns_;
     rows_ = rows; columns_ = columns;
+    if (columns > previous_columns) DefaultTabs(previous_columns); else tabs_.resize(columns);
     row_ = std::min(row_, rows - 1); column_ = std::min(column_, columns - 1);
     top_ = 0; bottom_ = rows - 1; pending_wrap_ = false;
     for (int row = 0; row < rows_; ++row) RepairLine(row);

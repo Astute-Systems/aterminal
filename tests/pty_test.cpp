@@ -1,9 +1,13 @@
 #include "session.h"
 
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <poll.h>
 #include <stdexcept>
+#include <unistd.h>
 
 std::string Text(const Terminal& terminal) {
     std::string result;
@@ -48,7 +52,46 @@ int main() {
         controls.Pump();
         if (Text(controls.terminal).find("26 25") == std::string::npos || controls.ExitStatus() != 0)
             throw std::runtime_error("Ctrl+Z/Y bytes were not preserved through the PTY");
-        std::cout << "PTY input, output, resize, exit, session isolation and control characters passed\n";
+        Session scrolled(24, 80, "/bin/sh", "stty -echo; seq 1 100; read a; seq 1 10; read b; printf '\\033[3J'; read c; seq 1 100; read d; printf '\\033[?1049h'; read e");
+        Until(scrolled, [&] { return scrolled.terminal.History().size() >= 77; });
+        scrolled.Scroll(23);
+        scrolled.Scroll(23);
+        if (scrolled.Scrollback() != 46) throw std::runtime_error("Scrollback paging failed");
+        scrolled.Scroll(-23);
+        if (scrolled.Scrollback() != 23) throw std::runtime_error("Scrollback paging down failed");
+        const auto history = scrolled.terminal.History().size();
+        scrolled.Send("\n");
+        Until(scrolled, [&] { return scrolled.terminal.History().size() >= history + 10; });
+        if (scrolled.Scrollback() != 33) throw std::runtime_error("Scrolled view drifted with new output");
+        scrolled.Send("\n");
+        Until(scrolled, [&] { return scrolled.terminal.History().empty(); });
+        if (scrolled.Scrollback() != 0) throw std::runtime_error("Scrollback offset survived clearing history");
+        scrolled.Send("\n");
+        Until(scrolled, [&] { return scrolled.terminal.History().size() >= 77; });
+        scrolled.Scroll(10);
+        scrolled.Send("\n");
+        Until(scrolled, [&] { return scrolled.terminal.Alternate(); });
+        if (scrolled.Scrollback() != 0) throw std::runtime_error("Scrollback offset survived the alternate screen");
+        if (access("/bin/bash", X_OK) == 0) {
+            char home[] = "/tmp/aterminal-pty-XXXXXX";
+            if (!mkdtemp(home)) throw std::runtime_error("mkdtemp failed");
+            const std::string rc = std::string(home) + "/.bashrc";
+            std::ofstream(rc) << "PS1='\\[\\033[01;32m\\]ab\\[\\033[00m\\]:cd\\$ '\n";
+            setenv("HOME", home, 1);
+            Session prompt(24, 80, "/bin/bash");
+            Until(prompt, [&] { return Text(prompt.terminal).find("ab:cd$ ") != std::string::npos; });
+            std::filesystem::remove_all(home);
+            int row = 0;
+            while (Terminal::Utf8(prompt.terminal.At(row, 0).text) != "a" || Terminal::Utf8(prompt.terminal.At(row, 5).text) != "$") ++row;
+            for (int column = 0; column < 5; ++column)
+                if (!prompt.terminal.At(row, column).bold) throw std::runtime_error("Prompt is not bold up to the dollar sign");
+            if (prompt.terminal.At(row, 5).bold) throw std::runtime_error("Bold continued past the prompt");
+            prompt.Send("cd /proc/$$/fd; echo FDS= *\n");
+            Until(prompt, [&] { return Text(prompt.terminal).find("\nFDS=") != std::string::npos; });
+            if (Text(prompt.terminal).find("\nFDS= 0 1 2 255") == std::string::npos)
+                throw std::runtime_error("Bash startup pipe stayed open: " + Text(prompt.terminal));
+        }
+        std::cout << "PTY input, output, resize, exit, session isolation, control characters, scrollback and bold prompt passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

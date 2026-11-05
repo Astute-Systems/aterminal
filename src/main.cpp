@@ -1,4 +1,5 @@
 #include "display.h"
+#include "motd.h"
 #include "session.h"
 #include "coriolis/adlib_synth.h"
 #include "softrender/png.h"
@@ -17,11 +18,13 @@
 
 namespace {
 
+constexpr int kDefaultColumns = 80, kDefaultRows = 25;
+
 struct Options {
     std::string shell = std::getenv("SHELL") ? std::getenv("SHELL") : "/bin/sh";
-    std::string command, screenshot;
+    std::string command, screenshot, motd;
     int frames = 0;
-    int width = 1104, height = 768;
+    int width = 0, height = 0; // 0 sizes the window to the default console
     bool self_test = false, fullscreen = false;
 };
 
@@ -136,10 +139,10 @@ public:
                 } else if (event.type == SDL_KEYDOWN) Key(event.key);
                 else if (event.type == SDL_TEXTINPUT && !settings_) {
                     const std::string text(event.text.text);
-                    if (text == "+") Zoom(1);
-                    else if (text == "-") Zoom(-1);
-                    else {
-                        if (SDL_GetModState() & KMOD_ALT) Current().Send("\033");
+                    const SDL_Keymod held = SDL_GetModState();
+                    // The window shortcuts below are chords, so they must not also type.
+                    if (!((held & KMOD_CTRL) && (held & KMOD_SHIFT) && (held & KMOD_ALT))) {
+                        if (held & KMOD_ALT) Current().Send("\033");
                         Input(text);
                     }
                 } else if (event.type == SDL_MOUSEWHEEL && !settings_) {
@@ -185,6 +188,21 @@ public:
                     (frame == 29 && test_input_ != "ATERMINAL\x1a\x19\x03") ||
                     (frame == 31 && test_input_ != "ATERMINAL\x1a\x19\x03\x03"))
                     throw std::runtime_error("Clipboard paste or terminal control-key forwarding failed");
+                if ((frame == 36 && test_input_ != "ATERMINAL\x1a\x19\x03\x03+") ||
+                    (frame == 37 && test_input_ != "ATERMINAL\x1a\x19\x03\x03+-") ||
+                    ((frame == 36 || frame == 37) && preferences_.scale != original_scale))
+                    throw std::runtime_error("Plain plus or minus did not type as text");
+                if (frame >= 32 && frame <= 35) {
+                    const int page = Current().terminal.Rows() - 1;
+                    // Late shell output moves the anchored view by exactly the lines it adds.
+                    const int history = static_cast<int>(Current().terminal.History().size());
+                    if (frame == 32) test_history_ = history;
+                    const int expected = (frame == 33 ? 2 * page : frame == 35 ? 0 : page) + history - test_history_;
+                    if (Current().Scrollback() != expected || test_input_ != "ATERMINAL\x1a\x19\x03\x03")
+                        throw std::runtime_error("Shift+PageUp/PageDown scrollback failed at frame " + std::to_string(frame) + ": offset " +
+                                                 std::to_string(Current().Scrollback()) + ", expected " + std::to_string(expected) + ", history " +
+                                                 std::to_string(history));
+                }
             }
             for (std::size_t index = 0; index < sessions_.size(); ++index) {
                 if (sessions_[index] && sessions_[index]->Pump() && static_cast<int>(index) == active_) dirty_ = true;
@@ -222,7 +240,7 @@ public:
                 throw std::runtime_error("SDL interaction, font, rendering or audio-synthesis self-test failed");
             if (std::string(SDL_GetWindowTitle(window_.get())) != "aterminal / F1")
                 throw std::runtime_error("Simplified window title self-test failed");
-            std::cout << "12 consoles, F-keys, zoom, fullscreen, title, mouse selection, clipboard, Ctrl+C/V/Z/Y, phosphor, mute, Unicode glyphs and AdLib synthesis passed\n";
+            std::cout << "12 consoles, F-keys, zoom, fullscreen, title, mouse selection, clipboard, Ctrl+C/V/Z/Y, Shift+PageUp/PageDown, phosphor, mute, Unicode glyphs and AdLib synthesis passed\n";
         }
         if (!options_.screenshot.empty() && !softrender::WritePng(display_.image, options_.screenshot))
             throw std::runtime_error("Could not write screenshot");
@@ -249,6 +267,7 @@ private:
     Uint64 flash_until_ = 0;
     std::string test_input_;
     int test_zoom_direction_ = 1;
+    int test_history_ = 0;
     Session& Current() { return *sessions_[active_]; }
 
     void ClearSelection() { selection_begin_ = selection_end_ = selection_anchor_ = -1; dragging_ = false; }
@@ -268,7 +287,11 @@ private:
     }
 
     void Switch(int index) {
-        if (!sessions_[index]) sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, options_.command);
+        if (!sessions_[index]) {
+            sessions_[index] = std::make_unique<Session>(display_.Rows(preferences_), display_.Columns(preferences_), options_.shell, options_.command);
+            // Nothing has been pumped yet, so the message lands ahead of all shell output.
+            if (!options_.motd.empty()) sessions_[index]->terminal.Feed(MotdText(options_.motd));
+        }
         active_ = index;
         settings_ = false; ClearSelection(); dirty_ = true;
         UpdateTitle();
@@ -287,7 +310,7 @@ private:
     }
 
     void Zoom(int direction) {
-        preferences_.scale = std::clamp(preferences_.scale + direction, 1, 5);
+        preferences_.scale = std::clamp(preferences_.scale + direction, 1, Display::MaxScale);
         Resize();
     }
 
@@ -388,8 +411,8 @@ private:
             else if (key == SDLK_p) settings_ = !settings_;
             else if (key == SDLK_c) Copy();
             else if (key == SDLK_v) Paste();
-            else if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS) Input("+");
-            else if (key == SDLK_MINUS || key == SDLK_KP_MINUS) Input("-");
+            else if ((event.keysym.mod & KMOD_ALT) && (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS)) Zoom(1);
+            else if ((event.keysym.mod & KMOD_ALT) && (key == SDLK_MINUS || key == SDLK_KP_MINUS)) Zoom(-1);
             else if (key == SDLK_f) {
                 if (!event.repeat) ToggleFullscreen();
             } else if (key == SDLK_RETURN && !Current().Running()) {
@@ -445,10 +468,10 @@ private:
         event.type = SDL_KEYDOWN;
         if (frame < 12) event.key.keysym.sym = SDLK_F1 + frame;
         else if (frame == 12 || frame == 13) {
-            event.type = SDL_TEXTINPUT;
-            if (frame == 12) test_zoom_direction_ = preferences_.scale == 5 ? -1 : 1;
+            if (frame == 12) test_zoom_direction_ = preferences_.scale == Display::MaxScale ? -1 : 1;
             const int direction = frame == 12 ? test_zoom_direction_ : -test_zoom_direction_;
-            event.text.text[0] = direction > 0 ? '+' : '-';
+            event.key.keysym.mod = KMOD_CTRL | KMOD_SHIFT | KMOD_ALT;
+            event.key.keysym.sym = direction > 0 ? SDLK_EQUALS : SDLK_MINUS;
         } else if (frame >= 14 && frame <= 17) {
             event.key.keysym.mod = KMOD_CTRL | KMOD_SHIFT;
             event.key.keysym.sym = frame < 16 ? (preferences_.amber ? SDLK_g : SDLK_a) : SDLK_s;
@@ -490,6 +513,19 @@ private:
             SDL_PushEvent(&event);
             event.type = SDL_MOUSEBUTTONUP;
         }
+        else if (frame == 36 || frame == 37) {
+            event.type = SDL_TEXTINPUT;
+            event.text.text[0] = frame == 36 ? '+' : '-';
+        }
+        else if (frame >= 32 && frame <= 35) {
+            if (frame == 32) {
+                std::string lines = "\033[999;1H";
+                for (int line = 0; line < Current().terminal.Rows() * 3; ++line) lines += "scrollback test\r\n";
+                Current().terminal.Feed(lines);
+            }
+            event.key.keysym.mod = KMOD_SHIFT;
+            event.key.keysym.sym = frame < 34 ? SDLK_PAGEUP : SDLK_PAGEDOWN;
+        }
         else return;
         SDL_PushEvent(&event);
     }
@@ -499,7 +535,7 @@ private:
         const std::string temporary = config_ + "." + std::to_string(getpid()) + ".tmp";
         std::ofstream file(temporary);
         file << preferences_.amber << ' ' << preferences_.sound << ' ' << preferences_.crt << ' '
-             << preferences_.bitmap << ' ' << preferences_.scale << '\n';
+             << preferences_.bitmap << '\n';
         file.close();
         if (file) {
             std::error_code error;
@@ -532,13 +568,12 @@ int main(int argc, char** argv) {
         char* directory = SDL_GetPrefPath("ross-newman", "aterminal");
         const std::string config = directory ? std::string(directory) + "preferences" : "";
         SDL_free(directory);
-        bool testing = false;
+        bool testing = false, text_size_given = false;
         for (int index = 1; index < argc; ++index) if (std::string(argv[index]) == "--self-test") testing = true;
         if (!testing) {
             std::ifstream file(config);
-            file >> preferences.amber >> preferences.sound >> preferences.crt >> preferences.bitmap >> preferences.scale;
+            file >> preferences.amber >> preferences.sound >> preferences.crt >> preferences.bitmap;
         }
-        preferences.scale = std::clamp(preferences.scale, 1, 5);
         for (int index = 1; index < argc; ++index) {
             const std::string raw(argv[index]);
             const auto equal = raw.find('=');
@@ -548,7 +583,7 @@ int main(int argc, char** argv) {
                 argument == "--text-size" || argument == "--colour" || argument == "--color" ||
                 argument == "--shell" || argument == "--command" || argument == "-e" ||
                 argument == "--screenshot" || argument == "--frames";
-            if (inline_value && !takes_value && argument != "--fullscreen")
+            if (inline_value && !takes_value && argument != "--fullscreen" && argument != "--motd")
                 throw std::runtime_error(argument + " does not accept a value");
             const auto value = [&]() -> std::string {
                 if (inline_value) return raw.substr(equal + 1);
@@ -577,7 +612,7 @@ int main(int argc, char** argv) {
             }
             else if (argument == "--width") options.width = IntegerFlag(value(), 400, 4096, argument);
             else if (argument == "--height") options.height = IntegerFlag(value(), 280, 2160, argument);
-            else if (argument == "--text-size") preferences.scale = IntegerFlag(value(), 1, 5, argument);
+            else if (argument == "--text-size") { preferences.scale = IntegerFlag(value(), 1, Display::MaxScale, argument); text_size_given = true; }
             else if (argument == "--colour" || argument == "--color") {
                 const std::string colour = value();
                 if (colour != "green" && colour != "amber") throw std::runtime_error(argument + " must be green or amber");
@@ -588,15 +623,32 @@ int main(int argc, char** argv) {
             else if (argument == "--screenshot") options.screenshot = value();
             else if (argument == "--frames") options.frames = IntegerFlag(value(), 1, 1000000, argument);
             else if (argument == "--demo") options.command = DemoCommand();
+            else if (argument == "--motd") {
+                std::string name = "random";
+                if (inline_value) name = value();
+                else if (index + 1 < argc && argv[index + 1][0] != '-') name = argv[++index];
+                if (name == "list") {
+                    std::cout << "random    A different message on each console\n";
+                    for (const Motd& message : Motds()) {
+                        std::string label = message.name;
+                        label.resize(std::max<std::size_t>(label.size(), 9), ' ');
+                        std::cout << label << ' ' << message.summary << '\n';
+                    }
+                    SDL_Quit(); return 0;
+                }
+                if (!MotdExists(name)) throw std::runtime_error("Unknown MOTD: " + name + " (see --motd=list)");
+                options.motd = name;
+            }
             else if (argument == "--self-test") { options.self_test = true; options.command = DemoCommand(); }
             else if (argument == "--help" || argument == "-h") {
                 std::cout << "aterminal [--green|--amber] [--no-sound|--sound] [--no-crt] [--bitmap]\n"
-                    "          [--size WIDTHxHEIGHT] [--width N --height N] [--text-size 1..5]\n"
+                    "          [--size WIDTHxHEIGHT] [--width N --height N] [--text-size 1..6]\n"
                     "          [--colour green|amber] [--fullscreen[=true|false]|--windowed]\n"
                     "          [--shell /path/to/shell] [-e 'command'] [--demo]\n"
+                    "          [--motd[=NAME|random|list]]\n"
                     "          [-h|--help]\n"
                     "Value flags accept --flag=value or --flag value; --color aliases --colour.\n"
-                    "F1-F12: consoles; +/-: zoom; Ctrl+Shift+Plus/Minus: literal signs\n"
+                    "F1-F12: consoles; Ctrl+Shift+Alt+Plus/Minus: zoom\n"
                     "Alt+Enter: fullscreen; Ctrl+Shift+F: fullscreen (alternative)\n"
                     "Ctrl+Shift+A/G: amber/green; S: sound; R: CRT; B: bitmap\n"
                     "Ctrl+C: copy selection, otherwise interrupt; Ctrl+V: paste\n"
@@ -606,7 +658,17 @@ int main(int argc, char** argv) {
                 SDL_Quit(); return 0;
             } else throw std::runtime_error("Unknown option: " + argument);
         }
+        if (!options.self_test && !options.motd.empty() && options.command == DemoCommand())
+            throw std::runtime_error("--motd cannot be used with --demo, which clears the screen");
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) throw std::runtime_error(SDL_GetError());
+        const auto default_width = [&] { return kDefaultColumns * Display::CellWidth(preferences) + Display::Margin * 2; };
+        const auto default_height = [&] { return kDefaultRows * Display::CellHeight(preferences) + Display::Margin * 2; };
+        // Keep the default console whole on smaller screens by lowering the zoom.
+        SDL_Rect usable{};
+        if (!text_size_given && options.width == 0 && options.height == 0 && SDL_GetDisplayUsableBounds(0, &usable) == 0)
+            while (preferences.scale > 1 && (default_width() > usable.w || default_height() > usable.h)) --preferences.scale;
+        if (options.width == 0) options.width = default_width();
+        if (options.height == 0) options.height = default_height();
         int result = 0;
         { Application application(preferences, options, options.self_test ? "" : config); result = application.Run(); }
         SDL_Quit();
