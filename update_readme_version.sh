@@ -9,7 +9,7 @@ fi
 
 VERSION=$(cat "$VERSION_FILE")
 
-sed -i.bak "s!\[Badge for version\]\(https://img.shields.io/badge/Version-PLACEHOLDER-blue\)!\[Badge for version\]\(https://img.shields.io/badge/Version-${VERSION}-blue\)!g" "$README_FILE"
+sed -i.bak "s!https://img.shields.io/badge/Version-PLACEHOLDER-blue!https://img.shields.io/badge/Version-${VERSION}-blue!g" "$README_FILE"
 
 rm "${README_FILE}.bak"
 

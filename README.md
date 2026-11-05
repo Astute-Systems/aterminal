@@ -1,5 +1,5 @@
 # aterminal
-![Badge for version](https://img.shields.io/badge/Version-PLACEHOLDER-blue)
+![Badge for version](https://img.shields.io/badge/Version-0.1.0-blue)
 
 A native Linux terminal with the look of a phosphor CRT: green or amber text,
 soft bloom, scanlines, a vignette, and optional AdLib-style key sounds. Written
