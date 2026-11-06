@@ -193,8 +193,10 @@ Start consoles in
 Start a login shell.
 .TP
 .B \-\-hold
-Show the exit status when a console's process ends. Consoles always stay on
-screen after exiting, until restarted.
+Keep a console open when its process ends, showing the exit status. Without it,
+the console closes, and closing the last console quits
+.BR aterminal .
+A command that could not run, with status 126 or 127, always stays open.
 .TP
 .BI \-\-prompt " style"
 Choose the bash prompt. The default is
@@ -307,7 +309,7 @@ Forward to the shell or application.
 Move through the scrollback.
 .TP
 .B Ctrl+Shift+Enter
-Restart the current shell after it exits.
+Restart a console kept open after its process ended.
 .SH ENVIRONMENT
 .TP
 .B SHELL

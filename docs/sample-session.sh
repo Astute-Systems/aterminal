@@ -1,6 +1,6 @@
 #!/bin/sh
 # Prints the scripted sample session used for the README screenshots.
-# Example: aterminal --green --text-size=2 --size=960x600 -- sh docs/sample-session.sh
+# Example: aterminal --green --text-size=2 --size=960x600 --hold -- sh docs/sample-session.sh
 
 printf '\033[?25l\033[2J\033[H'
 p() { printf '\033[1;32muser@aterminal\033[0m:\033[1;34m~/repos/aterminal\033[0m$ %s\n' "$1"; }

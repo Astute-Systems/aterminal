@@ -248,11 +248,17 @@ public:
                     else if (options_.bell == Bell::Audible) audio_.Click();
                     dirty_ = true;
                 }
-                if (options_.hold && sessions_[index] && !sessions_[index]->Running() && !exit_shown_[index]) {
-                    exit_shown_[index] = true;
-                    sessions_[index]->terminal.Feed("\r\n\033[0m[exited with status " + std::to_string(sessions_[index]->ExitStatus()) +
-                                                    "; Ctrl+Shift+Enter restarts]\r\n");
-                    dirty_ = true;
+                if (sessions_[index] && !sessions_[index]->Running()) {
+                    // 126 and 127 mean a command could not run, so keep its error readable.
+                    const int status = sessions_[index]->ExitStatus();
+                    if (options_.hold || status == 126 || status == 127) {
+                        if (!exit_shown_[index]) {
+                            exit_shown_[index] = true;
+                            sessions_[index]->terminal.Feed("\r\n\033[0m[exited with status " + std::to_string(status) +
+                                                            "; Ctrl+Shift+Enter restarts]\r\n");
+                            dirty_ = true;
+                        }
+                    } else if (!options_.self_test && !CloseConsole(static_cast<int>(index))) running = false;
                 }
             }
             const bool cursor = options_.no_blink || (SDL_GetTicks64() / 550) % 2 == 0;
@@ -332,6 +338,20 @@ private:
         SDL_Rect rect{Display::Margin, Display::Margin, display_.CellWidth(preferences_), display_.CellHeight(preferences_)};
         SDL_SetTextInputRect(&rect);
         ClearSelection(); dirty_ = true;
+    }
+
+    // Closes an exited console and leaves it for the next open one. Returns false,
+    // keeping the console, if it is the last one open.
+    bool CloseConsole(int index) {
+        const int count = static_cast<int>(sessions_.size());
+        for (int offset = 1; offset < count; ++offset) {
+            const int next = (index + offset) % count;
+            if (!sessions_[next]) continue;
+            sessions_[index].reset();
+            if (index == active_) Switch(next);
+            return true;
+        }
+        return false;
     }
 
     void Switch(int index) {
@@ -852,7 +872,8 @@ int main(int argc, char** argv) {
                     "Ctrl+Shift+A/G: amber/green; O: colour CRT; S: sound; R: CRT; B: bitmap\n"
                     "Ctrl+C: copy selection, otherwise interrupt; Ctrl+V: paste; middle click: paste selection\n"
                     "Ctrl+Z/Y: forwarded to shell/app (usually suspend/yank in shells)\n"
-                    "Ctrl+Shift+P or right click: setup; C/V: copy/paste; Enter: restart exited shell\n"
+                    "Ctrl+Shift+P or right click: setup; C/V: copy/paste; Enter: restart a held shell\n"
+                    "exit closes the console, and the last console closes aterminal\n"
                     "Shift+PageUp/PageDown or wheel: scrollback; drag: selection\n";
                 SDL_Quit(); return 0;
             } else throw std::runtime_error("Unknown option: " + argument);

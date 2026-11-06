@@ -1,6 +1,6 @@
 #!/bin/sh
 # Prints a colour reference chart. Run it inside aterminal with --colour=colour:
-#   aterminal --colour=colour --geometry=80x25 -- sh docs/colour-bars.sh
+#   aterminal --colour=colour --geometry=80x25 --hold -- sh docs/colour-bars.sh
 
 reset=$(printf '\033[0m')
 

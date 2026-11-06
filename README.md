@@ -1,7 +1,7 @@
 <p align="center"><img src="images/astute-terminal/Astute_Terminal_Icon_256.png" alt="aterminal icon" width="128"></p>
 
 # aterminal
-![Badge for version](https://img.shields.io/badge/Version-0.1.0-blue)
+![Badge for version](https://img.shields.io/badge/Version-0.1.1-blue)
 
 A native Linux terminal with the look of a phosphor CRT: green or amber text,
 soft bloom, scanlines, a vignette, and optional AdLib-style key sounds. Written
@@ -46,7 +46,7 @@ and black text on a coloured background becomes reverse video. To display the
 session yourself:
 
 ```sh
-./build/aterminal --colour=colour --text-size=2 --size=960x600 -- sh docs/sample-session.sh
+./build/aterminal --colour=colour --text-size=2 --size=960x600 --hold -- sh docs/sample-session.sh
 ```
 
 ### Colour Reference
@@ -56,7 +56,7 @@ session yourself:
 To display this chart in your own terminal:
 
 ```sh
-./build/aterminal --colour=colour --geometry=80x25 -- sh docs/colour-bars.sh
+./build/aterminal --colour=colour --geometry=80x25 --hold -- sh docs/colour-bars.sh
 ```
 
 The colour mode shows the 16 ANSI colours with these values. Bold text uses the
@@ -221,7 +221,7 @@ override saved preferences; if a setting appears more than once, the last wins.
 | `--console N` | Open on console N, 1-12 |
 | `--scrollback N` | Keep N history lines per console, 0-1000000; default 10000 |
 | `-l`, `--login` | Start a login shell |
-| `--hold` | Show the exit status when a console's process ends |
+| `--hold` | Keep a console open when its process ends, showing the exit status |
 | `--prompt STYLE`, `--prompt=list` | Choose the bash prompt, or give your own text; default `redhat`, `none` keeps yours |
 | `--cursor block\|bar\|underline` | Choose the cursor shape |
 | `--no-blink` | Keep the cursor steady |
@@ -264,7 +264,7 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 | Middle click | Paste the selected text, including text selected in other applications; the clipboard if nothing is selected |
 | Ctrl+Z / Ctrl+Y | Forward to the shell/application (usually suspend / yank in shells) |
 | Mouse wheel / Shift+PageUp / Shift+PageDown | Scrollback |
-| Ctrl+Shift+Enter | Restart the current shell after it exits |
+| Ctrl+Shift+Enter | Restart a console kept open after its process ended |
 
 Right click opens the setup panel for display colour mode, sound, CRT effects, and
 font mode. Console switching remains function-key-only.
@@ -328,7 +328,13 @@ later changes the row and column counts.
 
 Each console starts its own PTY when first visited. Background consoles keep
 processing output. Window resizing and zoom changes update every open PTY's
-dimensions. An exited shell's screen remains available until restarted.
+dimensions.
+
+When a console's shell or command ends, as with `exit`, the console closes and
+aterminal moves to the next open one. Closing the last console quits aterminal.
+A shell started from another shell just returns to it, as usual. With `--hold` the
+console stays open instead, and a command that could not run, with status 126 or
+127, also stays open so its error can be read.
 
 Under bash, consoles start with the classic Red Hat prompt; see
 [Retro Prompts](#retro-prompts). With `--prompt=none`, you keep the prompt from your
