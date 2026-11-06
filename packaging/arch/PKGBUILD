@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc='Phosphor CRT terminal emulator'
 arch=('x86_64')
 url='https://github.com/ross-newman/aterminal'
-license=('LicenseRef-unspecified')
+license=('MIT')
 depends=('sdl2' 'gcc-libs' 'glibc')
 makedepends=('cmake')
 options=('!debug')
@@ -21,4 +21,5 @@ check() {
 
 package() {
     DESTDIR="$pkgdir" cmake --install build
+    install -Dm644 "$startdir/../../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

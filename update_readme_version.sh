@@ -1,16 +1,8 @@
-#!/bin/bash
-VERSION_FILE="VERSION"
-README_FILE="README.md"
+#!/bin/sh
+# Updates the README version badge from the VERSION file.
+set -eu
 
-if [ ! -f "$VERSION_FILE" ]; then
-    echo "Error: Version file '$VERSION_FILE' not found. Cannot update README."
-    exit 1
-fi
-
-VERSION=$(cat "$VERSION_FILE")
-
-sed -i.bak "s!https://img.shields.io/badge/Version-PLACEHOLDER-blue!https://img.shields.io/badge/Version-${VERSION}-blue!g" "$README_FILE"
-
-rm "${README_FILE}.bak"
-
-echo "Successfully updated README.md with version $VERSION."
+cd "$(dirname "$0")"
+version=$(cat VERSION)
+sed -i -E "s|badge/Version-[^-]+-blue|badge/Version-$version-blue|" README.md
+echo "README badge set to $version"

@@ -2,14 +2,11 @@
 
 # aterminal
 ![Badge for version](https://img.shields.io/badge/Version-0.1.1-blue)
+![Badge for license](https://img.shields.io/badge/License-MIT-green)
 
-A native Linux terminal with the look of a phosphor CRT: green or amber text,
-soft bloom, scanlines, a vignette, and optional AdLib-style key sounds. Written
-in C++17 with SDL2 as its only external library dependency.
-
-A native Linux terminal with the look of a phosphor CRT: green or amber text,
-soft bloom, scanlines, a vignette, and optional AdLib-style key sounds. Written
-in C++17 with SDL2 as its only external library dependency.
+A native Linux terminal with the look of a phosphor CRT: green or amber text, or a
+colour tube, with soft bloom, scanlines, a vignette, and optional AdLib-style key
+sounds. Written in C++17 with SDL2 as its only external library dependency.
 
 Twelve independent shell consoles live behind F1-F12. There are no console tabs,
 toolbars, or clickable console selectors. The display stays focused on the shell.
@@ -18,15 +15,7 @@ aterminal implements a practical VT100/ANSI subset with Unicode extensions, not
 complete xterm compatibility. Read [Compatibility](#compatibility) before using
 it with applications that depend on advanced terminal features.
 
-## Versioning
-
-The project version is managed by the `VERSION` file in the repository root.
-To update the version:
-1. Update the `VERSION` file (e.g., from `0.1.0` to `0.2.0`).
-2. Update the badge URL in `README.md` to reflect the new version.
-3. Commit the changes.
-
-The version number used in the badge and title should always match the content of the `VERSION` file.
+## Screenshots
 
 ### Green Phosphor
 
@@ -186,6 +175,9 @@ and Arch Linux.
 Pushing a tag such as `v0.1.0` also publishes a GitHub release with the `.deb`,
 `.rpm` and Arch packages for each, and a `SHA256SUMS` file. The tag must match the `VERSION`
 file.
+
+To make a release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md), run
+`./update_readme_version.sh`, commit, and push a tag that matches `VERSION`.
 
 Installation includes the executable, a desktop menu entry and icon, a man page, Unicode font data, documentation,
 screenshots, and upstream notices. Keep the installed font data alongside the
@@ -440,6 +432,6 @@ details. The Space Paranoids renderer and AdLib library carry their upstream
 MIT notices; GNU Unifont has separate font licensing in
 [assets/UNIFONT-LICENSE.txt](assets/UNIFONT-LICENSE.txt).
 
-No top-level license for the new aterminal application code is currently declared.
-Do not assume the upstream component licenses license the entire application;
-resolve application licensing before redistributing a release.
+aterminal is released under the [MIT License](LICENSE). The Astute Terminal name,
+logo, and icons in `images/` are not covered by it; all rights to them are reserved
+by Astute Systems.
