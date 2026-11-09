@@ -4,6 +4,8 @@
 ![Badge for version](https://img.shields.io/badge/Version-0.1.1-blue)
 ![Badge for license](https://img.shields.io/badge/License-MIT-green)
 
+<p align="left"><a href="https://snapcraft.io/aterminal"><img alt="Get it from the Snap Store" src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg" height="48"></a></p>
+
 A native Linux terminal with the look of a phosphor CRT: green or amber text, or a
 colour tube, with soft bloom, scanlines, a vignette, and optional AdLib-style key
 sounds. Written in C++17 with SDL2 as its only external library dependency.
@@ -155,6 +157,12 @@ and man page caches:
 ./install.sh                 # /usr/local, using sudo if needed
 ./install.sh --user          # $HOME/.local, without root access
 ./install.sh --prefix /opt/aterminal
+```
+
+To install from the Snap Store:
+
+```sh
+sudo snap install aterminal --classic
 ```
 
 To build and install a package instead:
