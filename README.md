@@ -173,8 +173,14 @@ out the library dependencies.
 Every push builds and tests on Ubuntu 22.04, 24.04 and 26.04, AlmaLinux 9 and 10,
 and Arch Linux.
 Pushing a tag such as `v0.1.0` also publishes a GitHub release with the `.deb`,
-`.rpm` and Arch packages for each, and a `SHA256SUMS` file. The tag must match the `VERSION`
+`.rpm` and Arch packages for each, the snap, and a `SHA256SUMS` file. The tag must match the `VERSION`
 file.
+
+The snap is also published to the Snap Store: every push to `main` goes to the `edge`
+channel, and every version tag goes to `stable`. Publishing needs a
+`SNAPCRAFT_STORE_CREDENTIALS` repository secret, made with
+`snapcraft export-login --snaps=aterminal --acls=package_access,package_push,package_update,package_release -`.
+To build the snap locally, run `snapcraft pack`.
 
 To make a release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md), run
 `./update_readme_version.sh`, commit, and push a tag that matches `VERSION`.

@@ -1,0 +1,46 @@
+name: aterminal
+title: aterminal
+summary: Phosphor CRT terminal emulator
+description: |
+  A native Linux terminal with the look of a phosphor CRT: green or amber text,
+  or a colour tube, with soft bloom, scanlines, a vignette, and optional
+  AdLib-style key sounds. Twelve independent shell consoles live behind F1-F12.
+adopt-info: aterminal
+base: core24
+# A terminal must run the user's own shell and tools, which strict confinement prevents.
+confinement: classic
+grade: stable
+license: MIT
+website: https://github.com/ross-newman/aterminal
+source-code: https://github.com/ross-newman/aterminal
+icon: images/astute-terminal/Astute_Terminal_Icon_256.png
+platforms:
+  amd64:
+
+apps:
+  aterminal:
+    command: usr/bin/aterminal
+    desktop: usr/share/applications/aterminal.desktop
+
+parts:
+  aterminal:
+    plugin: cmake
+    source: .
+    cmake-parameters:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/usr
+    build-packages:
+      - g++
+      - libsdl2-dev
+    stage-packages:
+      - libsdl2-2.0-0
+    override-pull: |
+      craftctl default
+      craftctl set version="$(cat VERSION)"
+    override-build: |
+      craftctl default
+      SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SOFTRENDER_THREADS=2 \
+          ctest --test-dir "$CRAFT_PART_BUILD" --output-on-failure
+      # snapd only rewrites icon paths that point inside the snap.
+      sed -i 's|^Icon=.*|Icon=${SNAP}/usr/share/icons/hicolor/scalable/apps/aterminal.svg|' \
+          "$CRAFT_PART_INSTALL/usr/share/applications/aterminal.desktop"
