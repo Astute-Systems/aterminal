@@ -5,6 +5,7 @@
 - `exit` closes the console, and closing the last console quits aterminal.
 - Consoles stay open with `--hold`, or when a command could not run.
 - Released under the MIT License.
+- Published to the Snap Store: `sudo snap install aterminal --classic`.
 
 ## 0.1.0
 
