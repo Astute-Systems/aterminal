@@ -23,8 +23,13 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y build-essential cmake dpkg-dev file git libsdl2-dev
+          # Ubuntu's mirrors briefly serve mismatched files while they sync, so retry.
+          for attempt in 1 2 3 4 5; do
+              apt-get -o Acquire::Retries=3 update &&
+                  apt-get -o Acquire::Retries=3 install -y build-essential cmake dpkg-dev file git libsdl2-dev && break
+              [ "$attempt" = 5 ] && exit 1
+              sleep 60
+          done
       - uses: actions/checkout@v7
       - name: Build
         run: |
@@ -112,8 +117,12 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y build-essential cmake git libsdl2-dev
+          for attempt in 1 2 3 4 5; do
+              apt-get -o Acquire::Retries=3 update &&
+                  apt-get -o Acquire::Retries=3 install -y build-essential cmake git libsdl2-dev && break
+              [ "$attempt" = 5 ] && exit 1
+              sleep 60
+          done
       - uses: actions/checkout@v7
       - name: Build
         run: |
@@ -123,9 +132,52 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  snap:
+    runs-on: ubuntu-24.04
+    # Downloading the build image from Canonical can take half an hour.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: snapcore/action-build@v1
+        id: build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: snap
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+  snap-publish:
+    # Pushes to main go to the edge channel, and version tags go to stable.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [ubuntu, almalinux, arch, sanitizers, snap]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "$(cat VERSION)" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match VERSION $(cat VERSION)" >&2
+              exit 1
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          name: snap
+          path: snap-artifact
+      - name: Find the snap
+        id: snap
+        run: echo "path=$(ls snap-artifact/*.snap)" >> "$GITHUB_OUTPUT"
+      - uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snap.outputs.path }}
+          release: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'edge' }}
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ubuntu, almalinux, arch, sanitizers]
+    needs: [ubuntu, almalinux, arch, sanitizers, snap]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
