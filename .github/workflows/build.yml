@@ -125,7 +125,8 @@ jobs:
 
   snap:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Downloading the build image from Canonical can take half an hour.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: snapcore/action-build@v1
