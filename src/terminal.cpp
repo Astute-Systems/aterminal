@@ -170,6 +170,8 @@ void Terminal::Reset() {
     cells_.assign(rows_ * columns_, Cell{});
     row_ = column_ = 0;
     bracketed_paste_ = false;
+    mouse_mode_ = 0;
+    mouse_sgr_ = false;
     DefaultTabs(0);
 }
 
@@ -291,6 +293,11 @@ void Terminal::Csi(char final) {
             else if (mode == 7) wrap_ = enabled;
             else if (mode == 25) cursor_visible_ = enabled;
             else if (mode == 2004) bracketed_paste_ = enabled;
+            else if (mode == 1000 || mode == 1002 || mode == 1003) {
+                if (enabled) mouse_mode_ = mode;
+                else if (mouse_mode_ == mode) mouse_mode_ = 0;
+            }
+            else if (mode == 1006) mouse_sgr_ = enabled;
             else if ((mode == 1049 || mode == 47 || mode == 1047) && alternate_ != enabled) {
                 if (enabled) {
                     main_cells_ = std::move(cells_);

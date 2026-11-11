@@ -288,6 +288,10 @@ Open or close terminal setup. Escape also closes it.
 Mouse drag
 Select text. A single click clears the selection.
 .TP
+Mouse click, drag, wheel
+Sent to the application when it enables xterm mouse tracking (modes 1000, 1002,
+1003 and SGR 1006). Hold Shift to select, paste, or open setup instead.
+.TP
 .B Ctrl+C
 Copy the selected text and clear the selection, or send an interrupt when
 nothing is selected.

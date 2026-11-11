@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Mouse support for terminal applications such as Copilot CLI: clicks, drags, motion and the wheel are reported when an application enables xterm mouse tracking (modes 1000, 1002, 1003 and SGR 1006).
+- Hold Shift to bypass application mouse tracking and select text, paste, or open setup with right click.
+
 ## 0.1.1
 
 - `exit` closes the console, and closing the last console quits aterminal.

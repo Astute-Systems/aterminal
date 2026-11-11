@@ -1,7 +1,7 @@
 <p align="center"><img src="images/astute-terminal/Astute_Terminal_Icon_256.png" alt="aterminal icon" width="128"></p>
 
 # aterminal
-![Badge for version](https://img.shields.io/badge/Version-0.1.1-blue)
+![Badge for version](https://img.shields.io/badge/Version-0.2.0-blue)
 ![Badge for license](https://img.shields.io/badge/License-MIT-green)
 
 <p align="left"><a href="https://snapcraft.io/aterminal"><img alt="Get it from the Snap Store" src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg" height="48"></a></p>
@@ -75,6 +75,7 @@ Default text is `#D7DEDA`, and default bold text is `#FFFFFF`.
 - UTF-8 input, CJK glyphs, combining marks, and basic monochrome emoji support.
 - Synthetic bold, italic, underline, reverse video, and strikethrough attributes.
 - Mouse selection, clipboard copy/paste, and 10,000 scrollback lines per console.
+- Mouse reporting for terminal applications (xterm modes 1000, 1002, 1003 and SGR 1006), so tools such as Copilot CLI can use clicks, drags and the wheel.
 - Resizable windows, six text zoom levels, and Alt+Enter fullscreen switching.
 - Optional synthesized key clicks; no recorded sound assets are required.
 
@@ -264,6 +265,7 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 | Ctrl+Shift+P or right click | Open / close terminal setup |
 | Escape | Close setup |
 | Mouse drag | Select text; a single click clears selection |
+| Mouse click / drag / wheel | Sent to the application when it enables mouse tracking; hold Shift to select, paste, or open setup instead |
 | Ctrl+C | Copy selected text and clear selection; interrupt when nothing is selected |
 | Ctrl+Shift+C | Copy selected text without sending an interrupt |
 | Ctrl+V / Ctrl+Shift+V / Shift+Insert | Paste the clipboard |

@@ -21,6 +21,13 @@ int main() {
         Check(!terminal.At(0, 3).bold && !terminal.At(0, 3).italic, "SGR italic reset");
         terminal.Feed("\033[1;1H\033[31;1mRed\033[0m");
         terminal.Feed("\033[?1049hAlternate\033[?1049l");
+        Check(terminal.MouseMode() == 0 && !terminal.MouseSgr(), "mouse reporting starts off");
+        terminal.Feed("\033[?1000h\033[?1006h");
+        Check(terminal.MouseMode() == 1000 && terminal.MouseSgr(), "mouse reporting enabled");
+        terminal.Feed("\033[?1002h\033[?1000l");
+        Check(terminal.MouseMode() == 1002, "disabling another mouse mode keeps the active one");
+        terminal.Feed("\033[?1002l\033[?1006l");
+        Check(terminal.MouseMode() == 0 && !terminal.MouseSgr(), "mouse reporting disabled");
         {
             Terminal margins(10, 20);
             margins.Feed("\033[3;6r\033[5;1H\033[9B");

@@ -172,10 +172,17 @@ public:
                 else if (event.type == SDL_TEXTINPUT && !settings_) {
                     TextInput(event.text.text);
                 } else if (event.type == SDL_MOUSEWHEEL && !settings_) {
-                    Current().Scroll(event.wheel.y * 3);
-                    ClearSelection(); dirty_ = true;
+                    if (ReportingMouse()) MouseWheel(event.wheel.y);
+                    else {
+                        Current().Scroll(event.wheel.y * 3);
+                        ClearSelection(); dirty_ = true;
+                    }
                 } else if (event.type == SDL_MOUSEBUTTONDOWN) MouseDown(event.button);
-                else if (event.type == SDL_MOUSEMOTION && dragging_) {
+                else if (event.type == SDL_MOUSEMOTION && ReportingMouse()) MouseMotion(event.motion);
+                else if (event.type == SDL_MOUSEBUTTONUP && reported_button_ >= 0 && ReportButton(event.button.button) == reported_button_) {
+                    ReportMouse(reported_button_, event.button.x, event.button.y, true);
+                    reported_button_ = -1;
+                } else if (event.type == SDL_MOUSEMOTION && dragging_) {
                     const int index = IndexAt(event.motion.x, event.motion.y);
                     if (index != selection_anchor_ || selection_begin_ >= 0) {
                         selection_begin_ = selection_anchor_;
@@ -315,6 +322,7 @@ private:
     Audio audio_;
     int active_ = 0, selection_begin_ = -1, selection_end_ = -1, selection_anchor_ = -1;
     bool dirty_ = true, settings_ = false, dragging_ = false, last_cursor_ = false;
+    int reported_button_ = -1, reported_cell_ = -1;
     Uint64 flash_until_ = 0;
     std::string test_input_;
     int test_zoom_direction_ = 1;
@@ -479,16 +487,78 @@ private:
     }
 
     int IndexAt(int mouse_x, int mouse_y) {
+        const auto [col, row] = CellAt(mouse_x, mouse_y);
+        return row * Current().terminal.Columns() + col;
+    }
+
+    std::pair<int, int> CellAt(int mouse_x, int mouse_y) {
         int width = 0, height = 0;
         SDL_GetWindowSize(window_.get(), &width, &height);
         const int pixel_x = mouse_x * static_cast<int>(display_.image.width()) / std::max(width, 1);
         const int pixel_y = mouse_y * static_cast<int>(display_.image.height()) / std::max(height, 1);
         const int col = std::clamp((pixel_x - Display::Margin) / display_.CellWidth(preferences_), 0, Current().terminal.Columns() - 1);
         const int row = std::clamp((pixel_y - Display::Margin) / display_.CellHeight(preferences_), 0, Current().terminal.Rows() - 1);
-        return row * Current().terminal.Columns() + col;
+        return {col, row};
+    }
+
+    // Shift bypasses the application so selection and paste still work.
+    bool ReportingMouse() {
+        return !settings_ && Current().terminal.MouseMode() != 0 && !(SDL_GetModState() & KMOD_SHIFT);
+    }
+
+    static int ReportButton(int sdl_button) {
+        if (sdl_button == SDL_BUTTON_LEFT) return 0;
+        if (sdl_button == SDL_BUTTON_MIDDLE) return 1;
+        if (sdl_button == SDL_BUTTON_RIGHT) return 2;
+        return -1;
+    }
+
+    // button: 0-2 press, 3 release without a button (legacy), +32 motion, 64/65 wheel.
+    void ReportMouse(int button, int mouse_x, int mouse_y, bool release) {
+        const auto [col, row] = CellAt(mouse_x, mouse_y);
+        const SDL_Keymod held = SDL_GetModState();
+        int code = button;
+        if (held & KMOD_ALT) code += 8;
+        if (held & KMOD_CTRL) code += 16;
+        const int x = col + 1, y = row + 1;
+        std::string report;
+        if (Current().terminal.MouseSgr()) {
+            report = "\033[<" + std::to_string(code) + ";" + std::to_string(x) + ";" + std::to_string(y) + (release ? "m" : "M");
+        } else {
+            if (x > 223 || y > 223) return;
+            if (release) code = (code & ~3) | 3;
+            report = "\033[M";
+            report += static_cast<char>(32 + code);
+            report += static_cast<char>(32 + x);
+            report += static_cast<char>(32 + y);
+        }
+        reported_cell_ = row * Current().terminal.Columns() + col;
+        Current().Send(report);
+    }
+
+    void MouseMotion(const SDL_MouseMotionEvent& event) {
+        const int mode = Current().terminal.MouseMode();
+        if (mode == 1000 || (mode == 1002 && reported_button_ < 0)) return;
+        if (IndexAt(event.x, event.y) == reported_cell_) return;
+        ReportMouse((reported_button_ >= 0 ? reported_button_ : 3) + 32, event.x, event.y, false);
+    }
+
+    void MouseWheel(int amount) {
+        int x = 0, y = 0;
+        SDL_GetMouseState(&x, &y);
+        for (int i = 0; i < std::min(std::abs(amount), 10); ++i)
+            ReportMouse(amount > 0 ? 64 : 65, x, y, false);
     }
 
     void MouseDown(const SDL_MouseButtonEvent& event) {
+        if (ReportingMouse()) {
+            const int button = ReportButton(event.button);
+            if (button >= 0) {
+                reported_button_ = button;
+                ReportMouse(button, event.x, event.y, false);
+            }
+            return;
+        }
         if (event.button == SDL_BUTTON_RIGHT) { settings_ = !settings_; dirty_ = true; return; }
         if (settings_) {
             int width = 0, height = 0;
