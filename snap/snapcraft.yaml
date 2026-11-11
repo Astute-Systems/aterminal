@@ -11,8 +11,8 @@ base: core24
 confinement: classic
 grade: stable
 license: MIT
-website: https://github.com/ross-newman/aterminal
-source-code: https://github.com/ross-newman/aterminal
+website: https://github.com/Astute-Systems/aterminal
+source-code: https://github.com/Astute-Systems/aterminal
 icon: images/astute-terminal/Astute_Terminal_Icon_256.png
 platforms:
   amd64:

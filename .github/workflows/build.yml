@@ -49,6 +49,24 @@ jobs:
           path: build/*.deb
           if-no-files-found: error
 
+  ubuntu-arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['22.04', '26.04']
+    container: ubuntu:${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cross-compile and package
+        run: packaging/cross-arm64-deb.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ubuntu-${{ matrix.version }}-arm64
+          path: build-arm64/*.deb
+          if-no-files-found: error
+
   almalinux:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -147,11 +165,13 @@ jobs:
           if-no-files-found: error
 
   snap-publish:
-    # Pushes to main go to the edge channel, and version tags go to stable.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # The store holds classic snaps for manual review and accepts one pending upload
+    # at a time, so only version tags are published.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [ubuntu, almalinux, arch, sanitizers, snap]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    concurrency: snap-publish
     steps:
       - uses: actions/checkout@v7
       - name: Check the tag matches VERSION
@@ -173,11 +193,11 @@ jobs:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         with:
           snap: ${{ steps.snap.outputs.path }}
-          release: ${{ startsWith(github.ref, 'refs/tags/v') && 'stable' || 'edge' }}
+          release: stable
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ubuntu, almalinux, arch, sanitizers, snap]
+    needs: [ubuntu, ubuntu-arm64, almalinux, arch, sanitizers, snap]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
