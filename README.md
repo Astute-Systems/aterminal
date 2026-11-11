@@ -1,7 +1,7 @@
 <p align="center"><img src="images/astute-terminal/Astute_Terminal_Icon_256.png" alt="aterminal icon" width="128"></p>
 
 # aterminal
-![Badge for version](https://img.shields.io/badge/Version-0.2.0-blue)
+![Badge for version](https://img.shields.io/badge/Version-1.0.0-blue)
 ![Badge for license](https://img.shields.io/badge/License-MIT-green)
 
 <p align="left"><a href="https://snapcraft.io/aterminal"><img alt="Get it from the Snap Store" src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg" height="48"></a></p>
@@ -408,7 +408,7 @@ does not implement every xterm sequence or claim formal VT100 certification.
 display the base glyph instead of a fully shaped ligature.
 - Complex-script shaping, bidirectional layout, and complete Unicode grapheme
 and character-width rules are not implemented. Missing glyphs show `?`.
-- Mouse reporting, sixel graphics, OSC clipboard access, and DEC double-height text are not implemented.
+- Sixel graphics, OSC clipboard access, mouse encodings other than the default and SGR 1006 (such as UTF-8 1005 and urxvt 1015), and DEC double-height text are not implemented.
 - Windows and macOS are not supported by the Linux PTY implementation.
 
 The current tests exercise specific supported behaviour, not comprehensive

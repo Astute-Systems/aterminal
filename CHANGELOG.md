@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0
+
+- Arm64 `.deb` packages for Ubuntu 22.04 and 26.04, cross-compiled in CI.
+- The Snap Store upload now runs only for version tags, as the store holds classic snaps for review one upload at a time.
+- Project links point to the Astute-Systems repository.
+- Includes the 0.2.0 mouse support for terminal applications.
+
 ## 0.2.0
 
 - Mouse support for terminal applications such as Copilot CLI: clicks, drags, motion and the wheel are reported when an application enables xterm mouse tracking (modes 1000, 1002, 1003 and SGR 1006).
