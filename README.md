@@ -1,7 +1,7 @@
 <p align="center"><img src="images/astute-terminal/Astute_Terminal_Icon_256.png" alt="aterminal icon" width="128"></p>
 
 # aterminal
-![Badge for version](https://img.shields.io/badge/Version-1.0.0-blue)
+![Badge for version](https://img.shields.io/badge/Version-1.1.0-blue)
 ![Badge for license](https://img.shields.io/badge/License-MIT-green)
 
 <p align="left"><a href="https://snapcraft.io/aterminal"><img alt="Get it from the Snap Store" src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg" height="48"></a></p>

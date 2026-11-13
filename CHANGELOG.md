@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - Shift+Up and Shift+Down scroll one line, and Shift+Home and Shift+End jump to the oldest line and the live screen. Full-screen applications still receive these keys.
 - Insert, Delete, PageUp and PageDown send xterm modifier parameters, and Shift or Ctrl with F1-F12 and F13-F20 reach the application.
