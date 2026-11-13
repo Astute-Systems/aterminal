@@ -213,6 +213,12 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Use SemVer names for release assets
+        # The deb Version and file name use ~ for pre-releases (1.0.0~rc.4); published assets keep 1.0.0-rc.4.
+        run: |
+          cd artifacts
+          shopt -s nullglob
+          for package in *~*.deb; do mv "$package" "${package/\~/-}"; done
       - name: Add checksums
         run: cd artifacts && sha256sum * > SHA256SUMS
       - name: Publish the release

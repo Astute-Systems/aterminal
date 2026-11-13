@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 file(STRINGS VERSION ATERMINAL_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION)
-project(aterminal VERSION ${ATERMINAL_VERSION} LANGUAGES CXX)
+# VERSION holds SemVer (e.g. 1.0.0-rc.4); project() only accepts the numeric part.
+string(REGEX REPLACE "^([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" ATERMINAL_VERSION_NUMERIC "${ATERMINAL_VERSION}")
+project(aterminal VERSION ${ATERMINAL_VERSION_NUMERIC} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
@@ -110,6 +112,10 @@ install(DIRECTORY docs/screenshots DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs)
 # Packages: ./install.sh --deb or --rpm. Arch Linux uses packaging/arch/PKGBUILD.
 set(CPACK_GENERATOR DEB)
 set(CPACK_PACKAGE_NAME aterminal)
+set(CPACK_PACKAGE_VERSION "${ATERMINAL_VERSION}")
+# dpkg reads 1.0.0-rc.4 as upstream 1.0.0 with revision rc.4, which sorts above 1.0.0.
+# Debian pre-releases use ~ (1.0.0~rc.4); only the deb Version and file name change.
+string(REGEX REPLACE "^([0-9]+\\.[0-9]+\\.[0-9]+)-" "\\1~" CPACK_DEBIAN_PACKAGE_VERSION "${ATERMINAL_VERSION}")
 set(CPACK_PACKAGE_VENDOR "Astute Systems")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Phosphor CRT terminal emulator")
 set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
