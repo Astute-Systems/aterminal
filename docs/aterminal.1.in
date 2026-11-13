@@ -259,7 +259,7 @@ Save the final rendered display as a PNG when the application exits.
 .TP
 .B F1\-F12
 Switch to that console, creating it on first use. These keys are not forwarded
-to applications.
+to applications; Shift+F1\-F12 and Ctrl+F1\-F12 are.
 .TP
 .B Ctrl+Shift+Alt+Plus\fR, \fBCtrl+Shift+Alt+Minus
 Increase or decrease the text size.
@@ -310,7 +310,14 @@ clipboard if nothing is selected.
 Forward to the shell or application.
 .TP
 .B Shift+PageUp\fR, \fBShift+PageDown\fR, mouse wheel
-Move through the scrollback.
+Move through the scrollback by a page or wheel step.
+.TP
+.B Shift+Up\fR, \fBShift+Down\fR
+Scroll the scrollback one line.
+.TP
+.B Shift+Home\fR, \fBShift+End\fR
+Jump to the oldest scrollback line, or back to the live screen.
+Full-screen applications receive Shift+Up, Shift+Down, Shift+Home and Shift+End instead.
 .TP
 .B Ctrl+Shift+Enter
 Restart a console kept open after its process ended.

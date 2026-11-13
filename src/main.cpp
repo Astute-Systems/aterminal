@@ -1,4 +1,5 @@
 #include "display.h"
+#include "keys.h"
 #include "motd.h"
 #include "prompt.h"
 #include "session.h"
@@ -164,9 +165,15 @@ public:
             if (options_.self_test) InjectTest(frame);
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
+                // Application keypad keys are sent as escape sequences, so their text is dropped.
+                if (event.type == SDL_TEXTINPUT && suppress_text_) { suppress_text_ = false; continue; }
+                if (event.type != SDL_KEYDOWN && event.type != SDL_TEXTINPUT) suppress_text_ = false;
                 if (event.type == SDL_QUIT) running = false;
                 else if (event.type == SDL_WINDOWEVENT) {
                     if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) Resize();
+                    else if ((event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED || event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) &&
+                             !settings_ && Current().terminal.FocusReporting())
+                        Current().Send(event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED ? "\033[I" : "\033[O");
                     dirty_ = true;
                 } else if (event.type == SDL_KEYDOWN) Key(event.key);
                 else if (event.type == SDL_TEXTINPUT && !settings_) {
@@ -236,6 +243,16 @@ public:
 #endif
                 if ((frame == 38 && preferences_.colour == test_colour_) || (frame == 39 && preferences_.colour != test_colour_))
                     throw std::runtime_error("Ctrl+Shift+O colour CRT toggle failed");
+                if (frame >= 42 && frame <= 46) {
+                    const int history = static_cast<int>(Current().terminal.History().size());
+                    if (frame == 42) { test_history_ = history; test_scroll_input_ = test_input_; }
+                    // Shift+Up twice, Shift+Down, Shift+Home, then Shift+End; none of them reach the shell.
+                    const int expected = (frame == 42 ? 1 : frame == 43 ? 2 : frame == 44 ? 1 : frame == 45 ? history : 0) +
+                                         (frame <= 44 ? history - test_history_ : 0);
+                    if (Current().Scrollback() != expected || test_input_ != test_scroll_input_)
+                        throw std::runtime_error("Shift+Up/Down/Home/End scrollback failed at frame " + std::to_string(frame) + ": offset " +
+                                                 std::to_string(Current().Scrollback()) + ", expected " + std::to_string(expected));
+                }
                 if (frame >= 32 && frame <= 35) {
                     const int page = Current().terminal.Rows() - 1;
                     // Late shell output moves the anchored view by exactly the lines it adds.
@@ -287,7 +304,7 @@ public:
                 UpdateTitle();
                 dirty_ = false;
             }
-            if (++frame == (options_.self_test ? 44 : options_.frames)) running = false;
+            if (++frame == (options_.self_test ? 47 : options_.frames)) running = false;
             SDL_Delay(options_.self_test ? 10 : 8);
         }
         if (options_.self_test) {
@@ -321,10 +338,10 @@ private:
     std::array<std::unique_ptr<Session>, 12> sessions_;
     Audio audio_;
     int active_ = 0, selection_begin_ = -1, selection_end_ = -1, selection_anchor_ = -1;
-    bool dirty_ = true, settings_ = false, dragging_ = false, last_cursor_ = false;
+    bool dirty_ = true, settings_ = false, dragging_ = false, last_cursor_ = false, suppress_text_ = false;
     int reported_button_ = -1, reported_cell_ = -1;
     Uint64 flash_until_ = 0;
-    std::string test_input_;
+    std::string test_input_, test_scroll_input_;
     int test_zoom_direction_ = 1;
     int test_history_ = 0;
     std::string selected_text_;
@@ -594,8 +611,12 @@ private:
             if (!event.repeat) ToggleFullscreen();
             return;
         }
-        if (key >= SDLK_F1 && key <= SDLK_F12) { Switch(static_cast<int>(key - SDLK_F1)); audio_.Click(); return; }
+        suppress_text_ = false;
+        const bool alt = event.keysym.mod & KMOD_ALT;
+        // Plain and Alt function keys pick a console; Shift or Ctrl send them on.
+        if (key >= SDLK_F1 && key <= SDLK_F12 && !shift && !control) { Switch(static_cast<int>(key - SDLK_F1)); audio_.Click(); return; }
         if (control && shift) {
+            bool handled = true;
             if (key == SDLK_a) { preferences_.amber = true; preferences_.colour = false; }
             else if (key == SDLK_g) { preferences_.amber = false; preferences_.colour = false; }
             else if (key == SDLK_o) preferences_.colour = !preferences_.colour;
@@ -611,8 +632,10 @@ private:
                 if (!event.repeat) ToggleFullscreen();
             } else if (key == SDLK_RETURN && !Current().Running()) {
                 sessions_[active_].reset(); Switch(active_);
-            } else return;
-            dirty_ = true; return;
+            } else handled = false;
+            if (handled) { dirty_ = true; return; }
+            // Ctrl+Shift+2, 6, - and / are the control characters ^@, ^^, ^_ and ^?.
+            if (alt || (key != SDLK_2 && key != SDLK_6 && key != SDLK_MINUS && key != SDLK_SLASH)) return;
         }
         if (settings_) { if (key == SDLK_ESCAPE) { settings_ = false; dirty_ = true; } return; }
         audio_.Click();
@@ -624,37 +647,18 @@ private:
             Current().Scroll((key == SDLK_PAGEUP ? 1 : -1) * (Current().terminal.Rows() - 1));
             ClearSelection(); dirty_ = true; return;
         }
+        if (shift && !control && !alt && !Current().terminal.Alternate() &&
+            (key == SDLK_UP || key == SDLK_DOWN || key == SDLK_HOME || key == SDLK_END)) {
+            if (key == SDLK_END) Current().Follow();
+            else Current().Scroll(key == SDLK_UP ? 1 : key == SDLK_DOWN ? -1 : static_cast<int>(Current().terminal.History().size()));
+            ClearSelection(); dirty_ = true; return;
+        }
         if (shift && key == SDLK_INSERT) { Paste(); return; }
-        if (control && key >= SDLK_a && key <= SDLK_z) {
-            Input(std::string(1, static_cast<char>(key - SDLK_a + 1))); return;
-        }
-        if (control && key == SDLK_SPACE) { Input(std::string(1, '\0')); return; }
-        if (control && key == SDLK_LEFTBRACKET) { Input("\033"); return; }
-        if (control && key == SDLK_BACKSLASH) { Input(std::string(1, '\x1c')); return; }
-        if (control && key == SDLK_RIGHTBRACKET) { Input(std::string(1, '\x1d')); return; }
-        const char* sequence = nullptr;
-        char arrow = 0;
-        if (key == SDLK_UP) arrow = 'A';
-        else if (key == SDLK_DOWN) arrow = 'B';
-        else if (key == SDLK_RIGHT) arrow = 'C';
-        else if (key == SDLK_LEFT) arrow = 'D';
-        else if (key == SDLK_HOME) arrow = 'H';
-        else if (key == SDLK_END) arrow = 'F';
-        if (arrow) {
-            const int modifier = 1 + (shift ? 1 : 0) + ((event.keysym.mod & KMOD_ALT) ? 2 : 0) + (control ? 4 : 0);
-            std::string bytes = modifier > 1 ? "\033[1;" + std::to_string(modifier) :
-                (Current().terminal.ApplicationCursor() ? "\033O" : "\033[");
-            Input(bytes + arrow); return;
-        }
-        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) sequence = "\r";
-        else if (key == SDLK_BACKSPACE) sequence = "\x7f";
-        else if (key == SDLK_TAB) sequence = shift ? "\033[Z" : "\t";
-        else if (key == SDLK_ESCAPE) sequence = "\033";
-        else if (key == SDLK_INSERT) sequence = "\033[2~";
-        else if (key == SDLK_DELETE) sequence = "\033[3~";
-        else if (key == SDLK_PAGEUP) sequence = "\033[5~";
-        else if (key == SDLK_PAGEDOWN) sequence = "\033[6~";
-        if (sequence) Input(sequence);
+        const bool keypad = Current().terminal.ApplicationKeypad();
+        const std::string bytes = EncodeKey(key, event.keysym.mod, Current().terminal.ApplicationCursor(), keypad);
+        if (bytes.empty()) return;
+        if (keypad && KeypadTypesText(key, event.keysym.mod)) suppress_text_ = true;
+        Input(bytes);
     }
 
     void InjectTest(int frame) {
@@ -734,6 +738,10 @@ private:
             }
             event.key.keysym.mod = KMOD_SHIFT;
             event.key.keysym.sym = frame < 34 ? SDLK_PAGEUP : SDLK_PAGEDOWN;
+        }
+        else if (frame >= 42 && frame <= 46) {
+            event.key.keysym.mod = KMOD_SHIFT;
+            event.key.keysym.sym = frame < 44 ? SDLK_UP : frame == 44 ? SDLK_DOWN : frame == 45 ? SDLK_HOME : SDLK_END;
         }
         else return;
         SDL_PushEvent(&event);
@@ -944,7 +952,7 @@ int main(int argc, char** argv) {
                     "Ctrl+Z/Y: forwarded to shell/app (usually suspend/yank in shells)\n"
                     "Ctrl+Shift+P or right click: setup; C/V: copy/paste; Enter: restart a held shell\n"
                     "exit closes the console, and the last console closes aterminal\n"
-                    "Shift+PageUp/PageDown or wheel: scrollback; drag: selection\n";
+                    "Shift+PageUp/PageDown/Up/Down/Home/End or wheel: scrollback; drag: selection\n";
                 SDL_Quit(); return 0;
             } else throw std::runtime_error("Unknown option: " + argument);
         }

@@ -162,14 +162,14 @@ void Terminal::SoftReset() {
     origin_ = insert_ = dec_graphics_ = g1_graphics_ = shift_out_ = pending_wrap_ = false;
     repeat_ = 0;
     wrap_ = cursor_visible_ = true;
-    application_cursor_ = false;
+    application_cursor_ = application_keypad_ = false;
 }
 
 void Terminal::Reset() {
     SoftReset();
     cells_.assign(rows_ * columns_, Cell{});
     row_ = column_ = 0;
-    bracketed_paste_ = false;
+    bracketed_paste_ = focus_reporting_ = false;
     mouse_mode_ = 0;
     mouse_sgr_ = false;
     DefaultTabs(0);
@@ -292,6 +292,7 @@ void Terminal::Csi(char final) {
             else if (mode == 6) { origin_ = enabled; row_ = origin_ ? top_ : 0; column_ = 0; }
             else if (mode == 7) wrap_ = enabled;
             else if (mode == 25) cursor_visible_ = enabled;
+            else if (mode == 1004) focus_reporting_ = enabled;
             else if (mode == 2004) bracketed_paste_ = enabled;
             else if (mode == 1000 || mode == 1002 || mode == 1003) {
                 if (enabled) mouse_mode_ = mode;
@@ -389,6 +390,7 @@ void Terminal::Feed(std::string_view bytes) {
             else if (byte == 'D') Linefeed();
             else if (byte == 'E') { column_ = 0; Linefeed(); }
             else if (byte == 'M') { if (row_ == top_) Scroll(-1); else row_ = std::max(0, row_ - 1); }
+            else if (byte == '=' || byte == '>') application_keypad_ = byte == '=';
             else if (byte == 'c') Reset();
             else if (byte == 'Z') reply_ += "\033[?1;2c";
             continue;

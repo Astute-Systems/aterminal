@@ -256,7 +256,7 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 
 | Key | Action |
 | --- | --- |
-| F1-F12 | Switch to that console, creating it on first use |
+| F1-F12 | Switch to that console, creating it on first use; Shift+F1-F12 and Ctrl+F1-F12 go to the application |
 | Ctrl+Shift+Alt+Plus / Minus | Increase / decrease text size |
 | Ctrl+Shift+A / G | Amber / green phosphor |
 | Ctrl+Shift+O | Toggle colour CRT |
@@ -273,7 +273,9 @@ windowed dimensions. Alt+Enter switches modes without consuming a console key.
 | Ctrl+V / Ctrl+Shift+V / Shift+Insert | Paste the clipboard |
 | Middle click | Paste the selected text, including text selected in other applications; the clipboard if nothing is selected |
 | Ctrl+Z / Ctrl+Y | Forward to the shell/application (usually suspend / yank in shells) |
-| Mouse wheel / Shift+PageUp / Shift+PageDown | Scrollback |
+| Mouse wheel / Shift+PageUp / Shift+PageDown | Scrollback by wheel step or page |
+| Shift+Up / Shift+Down | Scroll the scrollback one line |
+| Shift+Home / Shift+End | Jump to the oldest scrollback line / back to the live screen |
 | Ctrl+Shift+Enter | Restart a console kept open after its process ended |
 
 Right click opens the setup panel for display colour mode, sound, CRT effects, and
@@ -353,7 +355,8 @@ adjusts `PS1`, so `~/.bashrc` itself is not changed. Other shells keep their own
 prompt.
 
 Scrollback applies to the normal screen. Full-screen applications such as `vim`
-and `less` have none, so Shift+PageUp and Shift+PageDown do nothing inside them.
+and `less` have none, so Shift+PageUp and Shift+PageDown do nothing inside them, and
+Shift+Up, Shift+Down, Shift+Home and Shift+End go to the application instead.
 A scrolled view stays on the same lines as new output arrives, and typing
 returns to the live screen.
 
@@ -403,7 +406,11 @@ printf '\033[1mBold\033[0m  \033[3mItalic\033[0m  \033[1;3mBoth\033[0m\n'
 
 - The application advertises `TERM=xterm-256color` for modern applications but
 does not implement every xterm sequence or claim formal VT100 certification.
-- F1-F12 always select consoles and are not forwarded to terminal applications.
+- Plain F1-F12 and Alt+F1-F12 select consoles and are not forwarded to terminal applications. Shift or Ctrl with F1-F12, and F13-F20, are sent as xterm sequences.
+- Insert, Delete, PageUp, PageDown, arrows, Home, End and function keys carry Shift, Alt and Ctrl as xterm modifier parameters. Alt adds an Escape prefix to Backspace, Tab and Escape (Alt+Enter is fullscreen); Ctrl+Backspace sends `^H`.
+- Ctrl+2 to Ctrl+8, Ctrl+/ and Ctrl+- send the control characters `^@` to `^?`.
+- The keypad follows NumLock, and switches to VT100 application sequences when an application sends `ESC =`.
+- Focus in and out reports (`ESC[?1004h`) are sent to the active console.
 - Emoji are monochrome. Joined emoji preserve their codepoints for copying but
 display the base glyph instead of a fully shaped ligature.
 - Complex-script shaping, bidirectional layout, and complete Unicode grapheme
@@ -422,7 +429,7 @@ compatibility with every shell, editor, or terminal application.
 | Unicode bitmap font cannot be found | Keep `assets/unifont.hex` in the source tree, or reinstall with the font asset |
 | No audio device or unwanted key sounds | Start with `--no-sound`; audio-device failures do not stop the terminal |
 | Unexpected colour or text size | Supply `--colour` and `--text-size`, or reset the preferences file |
-| An application needs F1-F12 | Use its alternative bindings; those keys are reserved for consoles |
+| An application needs plain F1-F12 | Use Shift or Ctrl with the key, or its alternative bindings; plain F-keys are reserved for consoles |
 | A terminal application renders incorrectly | Check the known limits; use a fuller emulator for unsupported features |
 
 ## Verification

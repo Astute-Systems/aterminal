@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Shift+Up and Shift+Down scroll one line, and Shift+Home and Shift+End jump to the oldest line and the live screen. Full-screen applications still receive these keys.
+- Insert, Delete, PageUp and PageDown send xterm modifier parameters, and Shift or Ctrl with F1-F12 and F13-F20 reach the application.
+- Alt+Backspace, Ctrl+Backspace, Alt with Tab and Escape, and Ctrl+2 to Ctrl+8, Ctrl+/ and Ctrl+- send the xterm bytes.
+- Keypad keys follow NumLock and support VT100 application keypad mode (`ESC =` / `ESC >`).
+- Focus in and out reporting (mode 1004).
+
 ## 1.0.0
 
 - Arm64 `.deb` packages for Ubuntu 22.04 and 26.04, cross-compiled in CI.

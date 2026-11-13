@@ -32,7 +32,9 @@ public:
     int Column() const { return column_; }
     bool CursorVisible() const { return cursor_visible_; }
     bool ApplicationCursor() const { return application_cursor_; }
+    bool ApplicationKeypad() const { return application_keypad_; }
     bool BracketedPaste() const { return bracketed_paste_; }
+    bool FocusReporting() const { return focus_reporting_; }
     bool Alternate() const { return alternate_; }
     // 0 off, otherwise 1000 (clicks), 1002 (drag) or 1003 (all motion).
     int MouseMode() const { return mouse_mode_; }
@@ -54,6 +56,7 @@ private:
     bool mouse_sgr_ = false;
     char32_t utf_value_ = 0, utf_min_ = 0, repeat_ = 0;
     bool cursor_visible_ = true, application_cursor_ = false, bracketed_paste_ = false;
+    bool application_keypad_ = false, focus_reporting_ = false;
     bool alternate_ = false, wrap_ = true, pending_wrap_ = false, origin_ = false;
     bool insert_ = false, dec_graphics_ = false, bell_ = false, join_next_ = false;
     bool g1_graphics_ = false, shift_out_ = false;
